@@ -15,6 +15,7 @@ Data Ingestion → Data Lake → Data Processing → Data Warehouse → Machine 
 - [Machine Learning](#machine-learning)
 - [Project Structure](#project-structure)
 - [Setup](#setup)
+- [Authors](#authors)
 
 ## Overview
 
@@ -35,3 +36,5 @@ The final goal is to deliver a complete data pipeline, from raw data ingestion t
 ## Project Structure
 
 ## Setup
+
+## Authors
