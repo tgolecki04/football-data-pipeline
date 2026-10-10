@@ -34,6 +34,18 @@ The final goal is to deliver a complete data pipeline, from raw data ingestion t
 ## Machine Learning
 
 ## Project Structure
+```
+📁 models/                        # Bazowe/wytrenowane modele (joblib/pkl) i wykresy
+📁 styles/                        # Style SCSS/CSS
+📁 images/                        # Grafiki wykorzystywane w raportach/stronie
+📁 docs/                          # Wygenerowana strona (GitHub Pages)
+📁 data/                          # Dodatkowe dane (jeśli używane)
+📄 _quarto.yml                    # Konfiguracja Quarto
+📄 index.qmd, wstep.qmd, ...      # Sekcje raportu/strony
+📄 aplikacja.qmd                  # Interaktywny formularz z predykcją (frontend)
+📄 script.js                      # Skrypt JS strony głównej
+📄 README.md
+```
 
 ## Setup
 
