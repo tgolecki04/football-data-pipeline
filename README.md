@@ -38,3 +38,19 @@ The final goal is to deliver a complete data pipeline, from raw data ingestion t
 ## Setup
 
 ## Authors
+  <table>
+    <tr>
+      <td align="center">
+        <a href="https://github.com">
+          <img src="https://github.com/tgolecki04.png" width="100px;" alt="Tomasz Golecki"/><br />
+          <sub><b>Tomasz Golecki</b></sub>
+        </a>
+      </td>
+      <td align="center">
+        <a href="https://github.com">
+          <img src="https://github.com/MikolajZagojski.png" width="100px;" alt="Mikołaj Zagojski"/><br />
+          <sub><b>Mikołaj Zagojski</b></sub>
+        </a>
+      </td>
+    </tr>
+  </table>
