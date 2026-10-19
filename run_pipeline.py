@@ -53,7 +53,8 @@ def main():
     )
 
     args = parser.parse_args()
-
+    run_script("src/storage/ensure_bucket.py")
+    
     if args.fetch:
         run_script("src/ingestion/fetch_api_football.py")
     else:
