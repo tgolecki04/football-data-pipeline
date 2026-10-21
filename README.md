@@ -35,13 +35,79 @@ The final goal is to deliver a complete data pipeline, from raw data ingestion t
 
 ## Project Structure
 ```
-📁 src/                           # data source                         
-📄 .env.example.txt               # sample data to launch 
-📄 compose.yaml                   # pipeline architecture details 
-📄 requirements.txt               # required libraries
+football-data-pipeline/
+├── sql/
+│   └── gold_team_stats.sql          # Gold layer: team standings view
+├── src/
+│   ├── ingestion/
+│   │   └── fetch_api_football.py    # API-Football to Bronze (raw JSON)
+│   ├── processing/
+│   │   └── transform_fixtures.py    # Bronze to Silver (Parquet)
+│   ├── storage/
+│   │   ├── ensure_bucket.py         # Creates the bucket if missing
+│   │   └── test_s3_connection.py    # Checks the connection to RustFS
+│   └── warehouse/
+│       └── load_fixtures.py         # Silver to PostgreSQL
+├── .env.example                     # Template for local configuration
+├── compose.yaml                     # RustFS and PostgreSQL containers
+├── requirements.txt                 # Python dependencies
+└── run_pipeline.py                  # Runs the whole pipeline
 ```
 
 ## Setup
+
+### Prerequisites
+
+- Docker with Docker Compose
+- Python 3.12.3
+- A free API key from [API-Football](https://dashboard.api-football.com)
+### Installation
+
+1. Clone the repository and go to its folder.
+
+2. Create your configuration file and set your `API_FOOTBALL_KEY` in it.
+
+```bash
+   cp .env.example .env
+```
+
+3. Start RustFS and PostgreSQL.
+
+```bash
+   docker compose up -d
+```
+
+4. Create a virtual environment and install the dependencies.
+
+```bash
+   python3 -m venv .venv
+   source .venv/bin/activate
+   pip install -r requirements.txt
+```
+
+### Running the pipeline
+
+The first run needs `--fetch` to download data from the API:
+
+```bash
+python run_pipeline.py --fetch
+```
+
+Later runs reuse the data already stored in RustFS, so they do not use your API request limit:
+
+```bash
+python run_pipeline.py
+```
+
+The bucket is created automatically, so no manual setup in RustFS is needed.
+
+### Checking the result
+
+```bash
+docker compose exec postgres psql -U db_user -d db -c "SELECT * FROM gold_team_stats ORDER BY points DESC LIMIT 5;"
+```
+Use your own values if you changed `POSTGRES_USER` or `POSTGRES_DB` in `.env`.
+
 
 ## Authors
   <table>
