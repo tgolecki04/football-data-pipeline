@@ -27,9 +27,56 @@ The final goal is to deliver a complete data pipeline, from raw data ingestion t
 
 ## Architecture
 
+```mermaid
+flowchart LR
+    API["API-Football"] -->|"fetch_api_football.py"| Bronze
+
+    subgraph RustFS["RustFS (data lake)"]
+        Bronze["Bronze<br/>raw JSON"]
+        Silver["Silver<br/>Parquet"]
+    end
+
+    Bronze -->|"transform_fixtures.py"| Silver
+    Silver -->|"load_fixtures.py"| Fixtures
+
+    subgraph PG["PostgreSQL (data warehouse)"]
+        Fixtures["fixtures<br/>table"]
+        Gold["gold_team_stats<br/>view"]
+    end
+
+    Fixtures -->|"gold_team_stats.sql"| Gold
+    Gold -.-> ML["Machine Learning<br/>(planned)"]
+```
+
+RustFS and PostgreSQL run as Docker containers defined in `compose.yaml`. `run_pipeline.py` runs the steps in order.
 ## Technologies
 
+| Area | Tools |
+| --- | --- |
+| Language | Python 3, SQL |
+| Data source | [API-Football](https://www.api-football.com) |
+| Data lake | RustFS (S3-compatible object storage) |
+| Data warehouse | PostgreSQL 17 |
+| Libraries | pandas, pyarrow, boto3, psycopg, python-dotenv, requests |
+| Infrastructure | Docker Compose |
+
 ## Data Pipeline
+
+The pipeline follows the medallion architecture. Data moves through three layers, each one cleaner than the previous.
+
+| Layer | Location | Format | Script |
+| --- | --- | --- | --- |
+| Bronze | RustFS, `bronze/api_football/...` | Raw JSON | `src/ingestion/fetch_api_football.py` |
+| Silver | RustFS, `silver/api_football/...` | Parquet | `src/processing/transform_fixtures.py` |
+| Warehouse | PostgreSQL table `fixtures` | Table | `src/warehouse/load_fixtures.py` |
+| Gold | PostgreSQL view `gold_team_stats` | View | `sql/gold_team_stats.sql` |
+
+1. **Ingestion.** Premier League fixtures for the 2023/24 season are downloaded from API-Football. The full API response is stored unchanged as a timestamped JSON file, so the raw data can always be reprocessed.
+2. **Processing.** The latest Bronze file is flattened into a table with one row per match (teams, goals, date, status). Duplicate fixtures are removed and the result is saved as Parquet.
+3. **Warehouse.** The Silver data is loaded into PostgreSQL. Loading is idempotent: rerunning the pipeline updates existing matches instead of duplicating them.
+4. **Gold.** The `gold_team_stats` view calculates standings from finished matches: played, wins, draws, losses, goals for and against, goal difference and points.
+
+`run_pipeline.py` runs all steps in order. Use the `--fetch` flag to download new data from the API, otherwise the latest data already stored in RustFS is reused.
 
 ## Machine Learning
 
