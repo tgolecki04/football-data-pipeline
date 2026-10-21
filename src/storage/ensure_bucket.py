@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-def ensure_bucket_exists():
+def ensure_bucket_exists() -> None:
     """Create the S3 bucket from S3_BUCKET if it does not exist yet."""
     bucket_name = os.environ["S3_BUCKET"]
 
