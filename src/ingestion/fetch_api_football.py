@@ -14,11 +14,12 @@ API_URL = "https://v3.football.api-sports.io/fixtures"
 API_KEY = os.environ["API_FOOTBALL_KEY"]
 BUCKET = os.environ["S3_BUCKET"]
 
-# Premier League = 39
-# Sezon 2023/2024 = 2023
+LEAGUE_ID = int(os.environ["LEAGUE_ID"])
+SEASON = int(os.environ["SEASON"])
+
 params = {
-    "league": 39,
-    "season": 2023,
+    "league": LEAGUE_ID,
+    "season": SEASON,
 }
 
 headers = {
@@ -71,8 +72,8 @@ timestamp = datetime.now(timezone.utc).strftime(
 )
 
 object_key = (
-    "bronze/api_football/"
-    "premier_league/season_2023/"
+    f"bronze/api_football/league_{LEAGUE_ID}/"
+    f"season_{SEASON}/"
     f"fixtures_{timestamp}.json"
 )
 

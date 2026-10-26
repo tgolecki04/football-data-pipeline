@@ -11,9 +11,12 @@ load_dotenv()
 
 BUCKET = os.environ["S3_BUCKET"]
 
+LEAGUE_ID = int(os.environ["LEAGUE_ID"])
+SEASON = int(os.environ["SEASON"])
+
 SILVER_KEY = (
-    "silver/api_football/"
-    "premier_league/season_2023/"
+    f"silver/api_football/league_{LEAGUE_ID}/"
+    f"season_{SEASON}/"
     "fixtures.parquet"
 )
 
