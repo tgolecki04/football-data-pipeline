@@ -1,4 +1,4 @@
-
+from data_quality import validate_fixtures
 import io
 import json
 import os
@@ -105,6 +105,8 @@ df = df.drop_duplicates(
 )
 
 df = df.sort_values("date")
+validate_fixtures(df)
+print("Validation ended successfully!")
 
 # 6. Zapis do Parquet w pamięci
 buffer = io.BytesIO()
