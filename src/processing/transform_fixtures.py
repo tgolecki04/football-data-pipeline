@@ -15,8 +15,8 @@ LEAGUE_ID = int(os.environ["LEAGUE_ID"])
 SEASON = int(os.environ["SEASON"])
 
 BRONZE_PREFIX = (
-    "bronze/api_football/"
-    "premier_league/season_2023/"
+    f"bronze/api_football/league_{LEAGUE_ID}/"
+    f"season_{SEASON}/"
 )
 
 SILVER_KEY = (
