@@ -136,3 +136,108 @@ def test_create_gold_view_propagates_database_error(monkeypatch):
         match="Database connection failed",
     ):
         run_pipeline.create_gold_view()
+
+
+def test_run_data_quality_checks_passes(monkeypatch, tmp_path):
+    sql_dir = tmp_path / "sql"
+    sql_dir.mkdir()
+
+    sql_file = sql_dir / "data_quality_checks.sql"
+    sql_file.write_text(
+        "SELECT 'duplicate_fixture_ids' AS check_name, 0 AS failures;",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        run_pipeline,
+        "ROOT",
+        tmp_path,
+    )
+    monkeypatch.setenv("POSTGRES_DB", "test_db")
+    monkeypatch.setenv("POSTGRES_USER", "test_user")
+    monkeypatch.setenv("POSTGRES_PASSWORD", "test_password")
+
+    class FakeCursor:
+        def execute(self, statement):
+            pass
+
+        def fetchone(self):
+            return ("duplicate_fixture_ids", 0)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc_value, traceback):
+            return False
+
+    class FakeConnection:
+        def cursor(self):
+            return FakeCursor()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc_value, traceback):
+            return False
+
+    monkeypatch.setattr(
+        run_pipeline.psycopg,
+        "connect",
+        lambda **kwargs: FakeConnection(),
+    )
+
+    run_pipeline.run_data_quality_checks()
+
+
+def test_run_data_quality_checks_fails_on_invalid_data(
+    monkeypatch,
+    tmp_path,
+):
+    sql_dir = tmp_path / "sql"
+    sql_dir.mkdir()
+
+    sql_file = sql_dir / "data_quality_checks.sql"
+    sql_file.write_text(
+        "SELECT 'duplicate_fixture_ids' AS check_name, 0 AS failures;",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(
+        run_pipeline,
+        "ROOT",
+        tmp_path,
+    )
+    monkeypatch.setenv("POSTGRES_DB", "test_db")
+    monkeypatch.setenv("POSTGRES_USER", "test_user")
+    monkeypatch.setenv("POSTGRES_PASSWORD", "test_password")
+
+    class FakeCursor:
+        def execute(self, statement):
+            pass
+
+        def fetchone(self):
+            return ("duplicate_fixture_ids", 1)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc_value, traceback):
+            return False
+
+    class FakeConnection:
+        def cursor(self):
+            return FakeCursor()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc_value, traceback):
+            return False
+
+    monkeypatch.setattr(
+        run_pipeline.psycopg,
+        "connect",
+        lambda **kwargs: FakeConnection(),
+    )
+
+    with pytest.raises(ValueError, match="duplicate_fixture_ids"):
+        run_pipeline.run_data_quality_checks()

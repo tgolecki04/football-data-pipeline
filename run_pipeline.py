@@ -125,6 +125,60 @@ def create_gold_view():
 
 
 
+def run_data_quality_checks():
+    logger.info("Running data quality checks...")
+    start_time = time.perf_counter()
+
+    try:
+        sql_path = ROOT / "sql" / "data_quality_checks.sql"
+        sql = sql_path.read_text(encoding="utf-8")
+
+        with psycopg.connect(
+            host="localhost",
+            port=5432,
+            dbname=os.environ["POSTGRES_DB"],
+            user=os.environ["POSTGRES_USER"],
+            password=os.environ["POSTGRES_PASSWORD"],
+        ) as conn:
+            with conn.cursor() as cursor:
+                for statement in sql.split(";"):
+                    if not statement.strip():
+                        continue
+
+                    cursor.execute(statement)
+                    result = cursor.fetchone()
+
+                    if result is None:
+                        continue
+
+                    check_name, failures = result
+
+                    if failures > 0:
+                        raise ValueError(
+                            f"Data quality check failed: {check_name} "
+                            f"({failures} failures)"
+                        )
+
+                    logger.info(
+                        "Data quality check passed: %s",
+                        check_name,
+                    )
+
+        duration = time.perf_counter() - start_time
+        logger.info(
+            "All data quality checks passed | Duration: %.2fs",
+            duration,
+        )
+
+    except Exception:
+        duration = time.perf_counter() - start_time
+        logger.exception(
+            "Data quality checks failed | Duration: %.2fs",
+            duration,
+        )
+        raise
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Football Data Pipeline"
@@ -185,6 +239,7 @@ def main():
     run_script("src/processing/transform_fixtures.py")
     run_script("src/warehouse/load_fixtures.py")
     create_gold_view()
+    run_data_quality_checks()
 
     total_duration = time.perf_counter() - pipeline_start_time
 
