@@ -4,6 +4,7 @@ import logging
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import psycopg
@@ -56,35 +57,72 @@ def positive_int(value):
     return number
 
 
+
 def run_script(script_path):
     logger.info("Running script: %s", script_path)
+    start_time = time.perf_counter()
 
-    subprocess.run(
-        [sys.executable, str(ROOT / script_path)],
-        cwd=ROOT,
-        check=True,
+    try:
+        subprocess.run(
+            [sys.executable, str(ROOT / script_path)],
+            cwd=ROOT,
+            check=True,
+        )
+    except subprocess.CalledProcessError:
+        duration = time.perf_counter() - start_time
+        logger.error(
+            "Script failed: %s | Duration: %.2fs",
+            script_path,
+            duration,
+        )
+        raise
+
+    duration = time.perf_counter() - start_time
+
+    logger.info(
+        "Script completed: %s | Duration: %.2fs",
+        script_path,
+        duration,
     )
 
-    logger.info("Script completed: %s", script_path)
+
+
 
 
 def create_gold_view():
     logger.info("Creating Gold view...")
+    start_time = time.perf_counter()
 
-    sql_path = ROOT / "sql" / "gold_team_stats.sql"
-    sql = sql_path.read_text(encoding="utf-8")
+    try:
+        sql_path = ROOT / "sql" / "gold_team_stats.sql"
+        sql = sql_path.read_text(encoding="utf-8")
 
-    with psycopg.connect(
-        host="localhost",
-        port=5432,
-        dbname=os.environ["POSTGRES_DB"],
-        user=os.environ["POSTGRES_USER"],
-        password=os.environ["POSTGRES_PASSWORD"],
-    ) as conn:
-        with conn.cursor() as cursor:
-            cursor.execute(sql)
+        with psycopg.connect(
+            host="localhost",
+            port=5432,
+            dbname=os.environ["POSTGRES_DB"],
+            user=os.environ["POSTGRES_USER"],
+            password=os.environ["POSTGRES_PASSWORD"],
+        ) as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(sql)
 
-    logger.info("Gold view created successfully")
+        duration = time.perf_counter() - start_time
+
+        logger.info(
+            "Gold view created successfully | Duration: %.2fs",
+            duration,
+        )
+
+    except Exception:
+        duration = time.perf_counter() - start_time
+
+        logger.exception(
+            "Failed to create Gold view | Duration: %.2fs",
+            duration,
+        )
+        raise
+
 
 
 def main():
@@ -129,7 +167,8 @@ def main():
             parser.error(f"Invalid {variable}: {exc}")
 
         os.environ[variable] = str(value)
-
+        
+    pipeline_start_time = time.perf_counter()
     logger.info("Starting football data pipeline")
     logger.info(
         "Configuration: league=%s, season=%s",
@@ -147,7 +186,12 @@ def main():
     run_script("src/warehouse/load_fixtures.py")
     create_gold_view()
 
-    logger.info("Pipeline completed successfully")
+    total_duration = time.perf_counter() - pipeline_start_time
+
+    logger.info(
+        "Pipeline completed successfully | Total duration: %.2fs",
+        total_duration,
+    )
 
 
 if __name__ == "__main__":
