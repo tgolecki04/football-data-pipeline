@@ -114,7 +114,12 @@ def test_main_stops_when_a_script_fails(monkeypatch):
 
 
 
+
 def test_create_gold_view_propagates_database_error(monkeypatch):
+    monkeypatch.setenv("POSTGRES_DB", "test_db")
+    monkeypatch.setenv("POSTGRES_USER", "test_user")
+    monkeypatch.setenv("POSTGRES_PASSWORD", "test_password")
+
     def mock_connect(**kwargs):
         raise psycopg.OperationalError(
             "Database connection failed"
