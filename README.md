@@ -114,7 +114,7 @@ football-data-pipeline/
 ### Prerequisites
 
 - Docker with Docker Compose
-- Python 3.12.3
+- Python 3.13
 - A free API key from [API-Football](https://dashboard.api-football.com)
 
 ### Installation
