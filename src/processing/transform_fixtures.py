@@ -1,10 +1,10 @@
-from data_quality import validate_fixtures
 import io
 import json
 import os
 
 import boto3
 import pandas as pd
+from data_quality import validate_fixtures
 from dotenv import load_dotenv
 
 load_dotenv()

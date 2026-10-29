@@ -5,11 +5,11 @@ import os
 import subprocess
 import sys
 import time
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 import psycopg
 from dotenv import load_dotenv
-from logging.handlers import RotatingFileHandler
 
 ROOT = Path(__file__).resolve().parent
 load_dotenv(ROOT / ".env")
@@ -103,9 +103,8 @@ def create_gold_view():
             dbname=os.environ["POSTGRES_DB"],
             user=os.environ["POSTGRES_USER"],
             password=os.environ["POSTGRES_PASSWORD"],
-        ) as conn:
-            with conn.cursor() as cursor:
-                cursor.execute(sql)
+        ) as conn, conn.cursor() as cursor:
+            cursor.execute(sql)
 
         duration = time.perf_counter() - start_time
 
@@ -139,30 +138,29 @@ def run_data_quality_checks():
             dbname=os.environ["POSTGRES_DB"],
             user=os.environ["POSTGRES_USER"],
             password=os.environ["POSTGRES_PASSWORD"],
-        ) as conn:
-            with conn.cursor() as cursor:
-                for statement in sql.split(";"):
-                    if not statement.strip():
-                        continue
+        ) as conn, conn.cursor() as cursor:
+            for statement in sql.split(";"):
+                if not statement.strip():
+                    continue
 
-                    cursor.execute(statement)
-                    result = cursor.fetchone()
+                cursor.execute(statement)
+                result = cursor.fetchone()
 
-                    if result is None:
-                        continue
+                if result is None:
+                    continue
 
-                    check_name, failures = result
+                check_name, failures = result
 
-                    if failures > 0:
-                        raise ValueError(
-                            f"Data quality check failed: {check_name} "
-                            f"({failures} failures)"
-                        )
-
-                    logger.info(
-                        "Data quality check passed: %s",
-                        check_name,
+                if failures > 0:
+                    raise ValueError(
+                        f"Data quality check failed: {check_name} "
+                        f"({failures} failures)"
                     )
+
+                logger.info(
+                    "Data quality check passed: %s",
+                    check_name,
+                )
 
         duration = time.perf_counter() - start_time
         logger.info(

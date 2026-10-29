@@ -1,7 +1,7 @@
 
 import json
 import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import boto3
 import requests
@@ -67,7 +67,7 @@ s3 = boto3.client(
     region_name="us-east-1",
 )
 
-timestamp = datetime.now(timezone.utc).strftime(
+timestamp = datetime.now(UTC).strftime(
     "%Y%m%dT%H%M%SZ"
 )
 

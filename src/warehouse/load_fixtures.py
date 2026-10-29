@@ -55,9 +55,8 @@ connection = psycopg.connect(
 )
 
 # 4. Utworzenie tabeli i załadowanie danych
-with connection:
-    with connection.cursor() as cursor:
-        cursor.execute("""
+with connection, connection.cursor() as cursor:
+    cursor.execute("""
             CREATE TABLE IF NOT EXISTS fixtures (
                 fixture_id BIGINT PRIMARY KEY,
                 date TIMESTAMPTZ,
@@ -74,7 +73,7 @@ with connection:
             );
         """)
 
-        insert_sql = """
+    insert_sql = """
             INSERT INTO fixtures (
                 fixture_id,
                 date,
@@ -109,35 +108,35 @@ with connection:
                 status = EXCLUDED.status;
         """
 
-        # Zamiana wartości Pandas na typy Pythona
-        records = []
+    # Zamiana wartości Pandas na typy Pythona
+    records = []
 
-        for row in df.itertuples(index=False):
-            records.append((
-                int(row.fixture_id),
-                row.date.to_pydatetime(),
-                int(row.league_id),
-                int(row.season),
-                row.round,
-                int(row.home_team_id),
-                row.home_team,
-                int(row.away_team_id),
-                row.away_team,
-                None if pd.isna(row.home_goals) else int(row.home_goals),
-                None if pd.isna(row.away_goals) else int(row.away_goals),
-                row.status,
-            ))
+    for row in df.itertuples(index=False):
+        records.append((
+            int(row.fixture_id),
+            row.date.to_pydatetime(),
+            int(row.league_id),
+            int(row.season),
+            row.round,
+            int(row.home_team_id),
+            row.home_team,
+            int(row.away_team_id),
+            row.away_team,
+            None if pd.isna(row.home_goals) else int(row.home_goals),
+            None if pd.isna(row.away_goals) else int(row.away_goals),
+            row.status,
+        ))
 
-        cursor.executemany(
-            insert_sql,
-            records,
-        )
+    cursor.executemany(
+        insert_sql,
+        records,
+    )
 
-        cursor.execute(
-            "SELECT COUNT(*) FROM fixtures;"
-        )
+    cursor.execute(
+        "SELECT COUNT(*) FROM fixtures;"
+    )
 
-        total = cursor.fetchone()[0]
+    total = cursor.fetchone()[0]
 
 print("Dane załadowane do PostgreSQL!")
 print(f"Liczba meczów w tabeli: {total}")

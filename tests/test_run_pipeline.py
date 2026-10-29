@@ -1,11 +1,12 @@
 import argparse
-import pytest
-import psycopg
-import run_pipeline
-from run_pipeline import positive_int
 import subprocess
-from run_pipeline import run_script
 from pathlib import Path
+
+import psycopg
+import pytest
+
+import run_pipeline
+from run_pipeline import positive_int, run_script
 
 
 @pytest.mark.parametrize(
@@ -76,9 +77,8 @@ def test_run_script_logs_failure_and_reraises(
 
     monkeypatch.setattr(subprocess, "run", mock_run)
 
-    with caplog.at_level("ERROR"):
-        with pytest.raises(subprocess.CalledProcessError):
-            run_script("src/processing/transform_fixtures.py")
+    with caplog.at_level("ERROR"), pytest.raises(subprocess.CalledProcessError):
+        run_script("src/processing/transform_fixtures.py")
 
     assert "Script failed" in caplog.text
 
