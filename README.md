@@ -58,6 +58,7 @@ RustFS and PostgreSQL run as Docker containers defined in `compose.yaml`. `run_p
 | Data lake | RustFS (S3-compatible object storage) |
 | Data warehouse | PostgreSQL 17 |
 | Libraries | pandas, pyarrow, boto3, psycopg, python-dotenv, requests |
+| Testing | pytest |
 | Infrastructure | Docker Compose |
 
 ## Data Pipeline
@@ -71,12 +72,13 @@ The pipeline follows the medallion architecture. Data moves through three layers
 | Warehouse | PostgreSQL table `fixtures` | Table | `src/warehouse/load_fixtures.py` |
 | Gold | PostgreSQL view `gold_team_stats` | View | `sql/gold_team_stats.sql` |
 
-1. **Ingestion.** Premier League fixtures for the 2023/24 season are downloaded from API-Football. The full API response is stored unchanged as a timestamped JSON file, so the raw data can always be reprocessed.
-2. **Processing.** The latest Bronze file is flattened into a table with one row per match (teams, goals, date, status). Duplicate fixtures are removed and the result is saved as Parquet.
+1. **Ingestion.** Fixtures for the league and season set in `.env` are downloaded from API-Football (Premier League 2023/24 by default). The full API response is stored unchanged as a timestamped JSON file, so the raw data can always be reprocessed.
+2. **Processing.** The latest Bronze file is flattened into a table with one row per match (teams, goals, date, status). Duplicate fixtures are removed, the data is validated (`src/processing/data_quality.py`) and the result is saved as Parquet.
 3. **Warehouse.** The Silver data is loaded into PostgreSQL. Loading is idempotent: rerunning the pipeline updates existing matches instead of duplicating them.
 4. **Gold.** The `gold_team_stats` view calculates standings from finished matches: played, wins, draws, losses, goals for and against, goal difference and points.
+5. **Data quality.** After the Gold view is created, the checks from `sql/data_quality_checks.sql` run against the warehouse. If any check finds problems, the pipeline stops with an error.
 
-`run_pipeline.py` runs all steps in order. Use the `--fetch` flag to download new data from the API, otherwise the latest data already stored in RustFS is reused.
+`run_pipeline.py` runs all steps in order and writes logs to the console and to `logs/pipeline.log`.
 
 ## Machine Learning
 
@@ -84,19 +86,25 @@ The pipeline follows the medallion architecture. Data moves through three layers
 ```
 football-data-pipeline/
 ├── sql/
+│   ├── data_quality_checks.sql      # Checks run against the warehouse
 │   └── gold_team_stats.sql          # Gold layer: team standings view
 ├── src/
 │   ├── ingestion/
 │   │   └── fetch_api_football.py    # API-Football to Bronze (raw JSON)
 │   ├── processing/
+│   │   ├── data_quality.py          # Validation of fixtures before Silver
 │   │   └── transform_fixtures.py    # Bronze to Silver (Parquet)
 │   ├── storage/
 │   │   ├── ensure_bucket.py         # Creates the bucket if missing
 │   │   └── test_s3_connection.py    # Checks the connection to RustFS
 │   └── warehouse/
 │       └── load_fixtures.py         # Silver to PostgreSQL
+├── tests/
+│   ├── test_data_quality.py         # Tests for fixture validation
+│   └── test_run_pipeline.py         # Tests for the pipeline runner
 ├── .env.example                     # Template for local configuration
 ├── compose.yaml                     # RustFS and PostgreSQL containers
+├── pytest.ini                       # pytest configuration
 ├── requirements.txt                 # Python dependencies
 └── run_pipeline.py                  # Runs the whole pipeline
 ```
@@ -108,6 +116,7 @@ football-data-pipeline/
 - Docker with Docker Compose
 - Python 3.12.3
 - A free API key from [API-Football](https://dashboard.api-football.com)
+
 ### Installation
 
 1. Clone the repository and go to its folder.
@@ -115,21 +124,30 @@ football-data-pipeline/
 2. Create your configuration file and set your `API_FOOTBALL_KEY` in it.
 
 ```bash
-   cp .env.example .env
+cp .env.example .env
 ```
+
+   The league and season come from `.env` too:
+
+   | Variable | Meaning | Default |
+   | --- | --- | --- |
+   | `LEAGUE_ID` | API-Football league ID | `39` (Premier League) |
+   | `SEASON` | Season start year | `2023` (season 2023/24) |
+
+   After pulling new changes, compare `.env` with `.env.example`, because new variables are not added to your file automatically.
 
 3. Start RustFS and PostgreSQL.
 
 ```bash
-   docker compose up -d
+docker compose up -d
 ```
 
 4. Create a virtual environment and install the dependencies.
 
 ```bash
-   python3 -m venv .venv
-   source .venv/bin/activate
-   pip install -r requirements.txt
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
 ```
 
 ### Running the pipeline
@@ -146,13 +164,29 @@ Later runs reuse the data already stored in RustFS, so they do not use your API 
 python run_pipeline.py
 ```
 
+To use a different league or season without editing `.env`, pass them as arguments:
+
+```bash
+# La Liga, season 2023/24
+python run_pipeline.py --fetch --league-id 140 --season 2023
+```
+
 The bucket is created automatically, so no manual setup in RustFS is needed.
+
+### Running the tests
+
+The tests do not need Docker or an internet connection:
+
+```bash
+pytest
+```
 
 ### Checking the result
 
 ```bash
 docker compose exec postgres psql -U db_user -d db -c "SELECT * FROM gold_team_stats ORDER BY points DESC LIMIT 5;"
 ```
+
 Use your own values if you changed `POSTGRES_USER` or `POSTGRES_DB` in `.env`.
 
 
