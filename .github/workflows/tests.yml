@@ -53,6 +53,8 @@ jobs:
           python -c "import os, pathlib, psycopg; conn = psycopg.connect(host='localhost', port=5432, dbname=os.environ['POSTGRES_DB'], user=os.environ['POSTGRES_USER'], password=os.environ['POSTGRES_PASSWORD']); conn.execute(pathlib.Path('sql/test_seed.sql').read_text(encoding='utf-8')); conn.execute(pathlib.Path('sql/gold_team_stats.sql').read_text(encoding='utf-8')); conn.commit(); conn.close()"
 
       - name: Run PostgreSQL integration tests
+        env:
+          TEST_DATABASE_SEEDED: "true"
         run: |
           python -m pytest -v -m integration
 
