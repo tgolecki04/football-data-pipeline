@@ -47,6 +47,12 @@ jobs:
         run: |
           python -m pytest -v -m "not integration"
 
-      - name: Run PostgreSQL connection test
+      
+      - name: Seed test database
         run: |
-          python -m pytest -v -m "integration and not requires_pipeline_data"
+          python -c "import os, pathlib, psycopg; conn = psycopg.connect(host='localhost', port=5432, dbname=os.environ['POSTGRES_DB'], user=os.environ['POSTGRES_USER'], password=os.environ['POSTGRES_PASSWORD']); conn.execute(pathlib.Path('sql/test_seed.sql').read_text(encoding='utf-8')); conn.execute(pathlib.Path('sql/gold_team_stats.sql').read_text(encoding='utf-8')); conn.commit(); conn.close()"
+
+      - name: Run PostgreSQL integration tests
+        run: |
+          python -m pytest -v -m integration
+
