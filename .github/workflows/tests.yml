@@ -9,6 +9,26 @@ jobs:
   test:
     runs-on: ubuntu-latest
 
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: test_user
+          POSTGRES_PASSWORD: test_password
+          POSTGRES_DB: test_db
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U test_user -d test_db"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      POSTGRES_USER: test_user
+      POSTGRES_PASSWORD: test_password
+      POSTGRES_DB: test_db
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -23,6 +43,10 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Run pytest
+      - name: Run unit tests
         run: |
-          python -m pytest -v
+          python -m pytest -v -m "not integration"
+
+      - name: Run PostgreSQL connection test
+        run: |
+          python -m pytest -v -m "integration and not requires_pipeline_data"
