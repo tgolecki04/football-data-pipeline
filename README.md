@@ -1,5 +1,5 @@
 # Real-Time Football Data Pipeline :soccer::oil_drum::hammer_and_wrench:
-
+[![Tests](https://github.com/tgolecki04/football-data-pipeline/actions/workflows/tests.yml/badge.svg)](https://github.com/tgolecki04/football-data-pipeline/actions/workflows/tests.yml)
 
 An end-to-end data engineering and machine learning project focused on building a data platform for football analytics and in-play match predictions. The system integrates historical match data with live updates, processes the data through a structured pipeline, and uses machine learning models to estimate match outcome probabilities as the game progresses.
 
@@ -12,6 +12,7 @@ Data Ingestion → Data Lake → Data Processing → Data Warehouse → Machine 
 - [Architecture](#architecture)
 - [Technologies](#technologies)
 - [Data Pipeline](#data-pipeline)
+- [Data Quality and Reliability](#data-quality-and-reliability)
 - [Machine Learning](#machine-learning)
 - [Project Structure](#project-structure)
 - [Setup](#setup)
@@ -80,14 +81,44 @@ The pipeline follows the medallion architecture. Data moves through three layers
 
 `run_pipeline.py` runs all steps in order and writes logs to the console and to `logs/pipeline.log`.
 
+## Data Quality and Reliability
+
+The pipeline validates fixture data before storing it in the Silver layer and runs SQL-based data quality checks against the PostgreSQL warehouse.
+
+The warehouse checks cover:
+- Duplicate fixture IDs.
+- Invalid finished fixtures.
+- Inconsistent team statistics.
+- Invalid team identifiers.
+
+If a warehouse check detects a failure, the pipeline raises an error instead of silently treating the run as successful.
+
+The PostgreSQL loader uses an upsert strategy, making repeated loads idempotent for existing fixture IDs.
+
+Automated tests cover data validation, pipeline orchestration, and PostgreSQL integration. GitHub Actions runs the test suite on pushes and pull requests.
+
 ## Machine Learning
+
+Machine learning and in-play match predictions are planned extensions of the project.
+
+The current implementation focuses on building a reliable data foundation: ingesting football fixtures, transforming raw data into analytical datasets, loading data into PostgreSQL, and validating data quality.
+
+Future development may include:
+- Feature engineering based on historical match data.
+- Training and evaluating match outcome prediction models.
+- Estimating match outcome probabilities.
+- Serving predictions through an API.
 
 ## Project Structure
 ```
 football-data-pipeline/
+├── .github/
+│   └── workflows/
+│       └── tests.yml
 ├── sql/
 │   ├── data_quality_checks.sql      # Checks run against the warehouse
 │   └── gold_team_stats.sql          # Gold layer: team standings view
+|   └── test_seed.sql                # Creates a test fixtures table 
 ├── src/
 │   ├── ingestion/
 │   │   └── fetch_api_football.py    # API-Football to Bronze (raw JSON)
@@ -102,6 +133,8 @@ football-data-pipeline/
 ├── tests/
 │   ├── test_data_quality.py         # Tests for fixture validation
 │   └── test_run_pipeline.py         # Tests for the pipeline runner
+|   └── test_postgres_integration.py # Integration tests for PostgreSQL and fixture data
+|
 ├── .env.example                     # Template for local configuration
 ├── compose.yaml                     # RustFS and PostgreSQL containers
 ├── pytest.ini                       # pytest configuration
@@ -175,11 +208,23 @@ The bucket is created automatically, so no manual setup in RustFS is needed.
 
 ### Running the tests
 
-The tests do not need Docker or an internet connection:
+**Unit tests**
+
+Unit tests do not require Docker or an internet connection:
 
 ```bash
-pytest
+python -m pytest -v -m "not integration"
 ```
+
+**Integration tests**
+
+Integration tests require a running PostgreSQL instance and a correctly configured environment:
+
+```bash
+python -m pytest -v -m integration
+```
+
+Some integration tests require preloaded pipeline data. The CI workflow uses a separate test database and seed data to verify the Gold layer.
 
 ### Checking the result
 
