@@ -113,6 +113,21 @@ def test_main_stops_when_a_script_fails(monkeypatch):
         run_pipeline.main()
 
 
+def test_main_ensures_bucket_before_others_steps(monkeypatch):
+    calls = []
+
+    monkeypatch.setattr(run_pipeline, "run_script", calls.append)
+    monkeypatch.setattr(run_pipeline, "create_gold_view", lambda: None)
+    monkeypatch.setattr(run_pipeline, "run_data_quality_checks", lambda: None)
+
+    monkeypatch.setattr(
+        "sys.argv",
+        ["run_pipeline.py", "--fetch", "--league-id", "39", "--season", "2023"],
+    )
+
+    run_pipeline.main()
+
+    assert calls[0] == "src/storage/ensure_bucket.py"
 
 
 def test_create_gold_view_propagates_database_error(monkeypatch):

@@ -229,6 +229,8 @@ def main():
         os.environ["LEAGUE_ID"],
         os.environ["SEASON"],
     )
+    
+    run_script("src/storage/ensure_bucket.py")
 
     if args.fetch:
         logger.info("API fetch enabled")
