@@ -1,11 +1,24 @@
+"""Download fixtures from API-FOOTBALL and store the raw response in the Bronze layer."""
 
 import json
+import logging
 import os
+import sys
 from datetime import UTC, datetime
+
 
 import boto3
 import requests
 from dotenv import load_dotenv
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+    stream=sys.stdout,
+)
+
+logger = logging.getLogger(__name__)
 
 load_dotenv()
 
@@ -26,7 +39,9 @@ headers = {
     "x-apisports-key": API_KEY,
 }
 
-print("Pobieram dane z API-FOOTBALL...")
+logger.info("Fetching fixtures from API-FOOTBALL: league=%s, season=%s",
+            LEAGUE_ID,
+            SEASON)
 
 response = requests.get(
     API_URL,
@@ -39,26 +54,19 @@ response.raise_for_status()
 
 data = response.json()
 
-# API może zwrócić błąd nawet przy HTTP 200
+# The API can report errors even with HTTP 200
 if data.get("errors"):
     raise RuntimeError(f"Błąd API: {data['errors']}")
 
 matches = data.get("response", [])
 
-print(f"Pobrano meczów: {len(matches)}")
-print(
-    "Pozostałe requesty dzisiaj:",
-    response.headers.get(
-        "x-ratelimit-requests-remaining",
-        "brak informacji",
-    ),
-)
+logger.info("Fetched %d fixtures", len(matches))
 
-# Nie zapisujemy pustych odpowiedzi
+# Do not store empty responses 
 if not matches:
     raise RuntimeError("API nie zwróciło meczów.")
 
-# Połączenie z RustFS
+# RustFS is S3-compatible, so boto3 works with a custom endpoint 
 s3 = boto3.client(
     "s3",
     endpoint_url=os.environ["S3_ENDPOINT"],
@@ -67,9 +75,7 @@ s3 = boto3.client(
     region_name="us-east-1",
 )
 
-timestamp = datetime.now(UTC).strftime(
-    "%Y%m%dT%H%M%SZ"
-)
+timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
 
 object_key = (
     f"bronze/api_football/league_{LEAGUE_ID}/"
@@ -77,7 +83,7 @@ object_key = (
     f"fixtures_{timestamp}.json"
 )
 
-# Zapisujemy pełną odpowiedź API
+# Store the full API response unchanged so it can be reprocessed later
 s3.put_object(
     Bucket=BUCKET,
     Key=object_key,
@@ -89,6 +95,5 @@ s3.put_object(
     ContentType="application/json",
 )
 
-print("Dane zapisane w RustFS!")
-print(f"Bucket: {BUCKET}")
-print(f"Obiekt: {object_key}")
+logger.info("Saved raw data to RustFS: bucket=%s, key=%s",BUCKET,object_key)
+
