@@ -1,4 +1,7 @@
+"""Check that the connection to RustFS (S3) works correctly."""
 
+import logging
+import sys
 import os
 
 import boto3
@@ -20,6 +23,4 @@ response = s3.list_objects_v2(
     Bucket=bucket_name
 )
 
-print("Połączenie z RustFS działa!")
-print("Bucket:", bucket_name)
-print("Liczba obiektów:", response.get("KeyCount", 0))
+logging.info("RustFs connection works: bucket=%s, objects=%d", bucket_name, response.get("KeyCount", 0),)
