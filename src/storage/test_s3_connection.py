@@ -11,13 +11,13 @@ load_dotenv()
 
 s3 = boto3.client(
     "s3",
-    endpoint_url=os.getenv("S3_ENDPOINT"),
-    aws_access_key_id=os.getenv("RUSTFS_ACCESS_KEY"),
-    aws_secret_access_key=os.getenv("RUSTFS_SECRET_KEY"),
+    endpoint_url=os.environ["S3_ENDPOINT"],
+    aws_access_key_id=os.environ["RUSTFS_ACCESS_KEY"],
+    aws_secret_access_key=os.environ["RUSTFS_SECRET_KEY"],
     region_name="us-east-1",
 )
 
-bucket_name = os.getenv("S3_BUCKET")
+bucket_name = os.environ["S3_BUCKET"]
 
 response = s3.list_objects_v2(
     Bucket=bucket_name
