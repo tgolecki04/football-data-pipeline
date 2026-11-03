@@ -1,11 +1,23 @@
+""" Transform the latest Bronze fixtures into Silver Parquet file. """
+
 import io
 import json
+import logging
+import sys
 import os
 
 import boto3
 import pandas as pd
 from data_quality import validate_fixtures
 from dotenv import load_dotenv
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+    stream=sys.stdout,
+)
+logger = logging.getLogger(__name__)
 
 load_dotenv()
 
@@ -25,7 +37,7 @@ SILVER_KEY = (
     "fixtures.parquet"
 )
 
-# 1. Połączenie z RustFS
+# RustFS is S3-compatible, so boto3 works with a custom endpoint
 s3 = boto3.client(
     "s3",
     endpoint_url=os.environ["S3_ENDPOINT"],
@@ -34,7 +46,7 @@ s3 = boto3.client(
     region_name="us-east-1",
 )
 
-# 2. Znalezienie plików Bronze
+# Find the Bronze files
 objects = []
 
 paginator = s3.get_paginator("list_objects_v2")
@@ -49,14 +61,13 @@ for page in paginator.paginate(
     )
 
 if not objects:
-    raise RuntimeError("Nie znaleziono danych Bronze.")
+    raise RuntimeError("No Bronze files found for the specified league and season.")
 
 latest = max(objects, key=lambda obj: obj["LastModified"])
 bronze_key = latest["Key"]
 
-print("Odczytuję:", bronze_key)
+logger.info("Reading Bronze file: %s", bronze_key)
 
-# 3. Pobranie JSON z RustFS
 response = s3.get_object(
     Bucket=BUCKET,
     Key=bronze_key,
@@ -68,7 +79,7 @@ data = json.loads(
 
 matches = data["response"]
 
-# 4. Zamiana JSON na wiersze tabeli
+# Flatten the nested structure into a list of dictionaries
 rows = []
 
 for match in matches:
@@ -97,7 +108,6 @@ df = pd.DataFrame(rows)
 if df.empty:
     raise RuntimeError("Brak meczów do przetworzenia.")
 
-# 5. Ustawienie typów danych
 df["date"] = pd.to_datetime(
     df["date"],
     utc=True,
@@ -108,10 +118,11 @@ df = df.drop_duplicates(
 )
 
 df = df.sort_values("date")
-validate_fixtures(df)
-print("Validation ended successfully!")
 
-# 6. Zapis do Parquet w pamięci
+validate_fixtures(df)
+logger.info("Validation passed")
+
+# Write Parquet to a memory, so no temporary file is needed
 buffer = io.BytesIO()
 
 df.to_parquet(
@@ -120,7 +131,6 @@ df.to_parquet(
     index=False,
 )
 
-# 7. Wysłanie do RustFS
 s3.put_object(
     Bucket=BUCKET,
     Key=SILVER_KEY,
@@ -128,21 +138,22 @@ s3.put_object(
     ContentType="application/octet-stream",
 )
 
-print("Transformacja zakończona!")
-print("Liczba meczów:", len(df))
-print("Liczba kolumn:", len(df.columns))
-print("Zapisano:", SILVER_KEY)
+logger.info(
+    "Transformation finished: %d fixtures, %d columns, saved to Silver: %s",
+    len(df),
+    len(df.columns),
+    SILVER_KEY
+)
 
-print("\nPrzykładowe dane:")
-print(
-    df[
-        [
-            "date",
-            "home_team",
-            "away_team",
-            "home_goals",
-            "away_goals",
-            "status",
+logger.info(
+    "Sample data from Silver file:\n%s",
+    df[[
+        "date",
+        "home_team",
+        "away_team",
+        "home_goals",
+        "away_goals",
+        "status"
         ]
-    ].head()
+    ].head(10).to_string(),
 )

@@ -1,8 +1,14 @@
+"""Make sure the S3 bucket exists, creating it if necessary."""
+
+import logging
 import os
+import sys
 
 import boto3
 from botocore.exceptions import ClientError
 from dotenv import load_dotenv
+
+logger = logging.getLogger(__name__)
 
 load_dotenv()
 
@@ -20,15 +26,21 @@ def ensure_bucket_exists() -> None:
 
     try:
         s3.head_bucket(Bucket=bucket_name)
-        print(f"Bucket '{bucket_name}' already exists.")
+        logging.info("Bucket '%s' already exists.", bucket_name)
     except ClientError as error:
         code = error.response["Error"]["Code"]
         # Only a missing bucket is created, other errors are raised
         if code in ("404", "NoSuchBucket", "NotFound"):
             s3.create_bucket(Bucket=bucket_name)
-            print(f"Bucket '{bucket_name}' created.")
+            logging.info("Bucket '%s' created.", bucket_name)
         else:
             raise
 
 if __name__ == "__main__":
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s - %(levelname)s - %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+        stream=sys.stdout,
+    )
     ensure_bucket_exists()

@@ -3,7 +3,7 @@ CREATE OR REPLACE VIEW gold_team_stats AS
 
 WITH team_matches AS (
 
-    -- Mecze z perspektywy gospodarzy
+    --Home teams perspective
     SELECT
         season,
         league_id,
@@ -18,7 +18,7 @@ WITH team_matches AS (
 
     UNION ALL
 
-    -- Mecze z perspektywy gości
+    -- Away teams perspective
     SELECT
         season,
         league_id,
