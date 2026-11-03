@@ -1,11 +1,24 @@
+"""Load the Silver fixtures Parquet file into to PostgreSQL fixture table."""
 
 import io
+import logging
 import os
+import sys
+
 
 import boto3
 import pandas as pd
 import psycopg
 from dotenv import load_dotenv
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+    syslog=sys.stdout,
+)
+
+logger = logging.getLogger(__name__)
 
 load_dotenv()
 
@@ -20,7 +33,7 @@ SILVER_KEY = (
     "fixtures.parquet"
 )
 
-# 1. Połączenie z RustFS
+# RustFS is S3-compatible, so boto3 works with a custom endpoint 
 s3 = boto3.client(
     "s3",
     endpoint_url=os.environ["S3_ENDPOINT"],
@@ -29,23 +42,21 @@ s3 = boto3.client(
     region_name="us-east-1",
 )
 
-print("Pobieram Parquet z RustFS...")
+logging.info("Reading Silver file form RustFS: %s", SILVER_KEY)
 
 response = s3.get_object(
     Bucket=BUCKET,
     Key=SILVER_KEY,
 )
 
-# 2. Odczyt danych do Pandas
 parquet_bytes = response["Body"].read()
 
 df = pd.read_parquet(
     io.BytesIO(parquet_bytes)
 )
 
-print(f"Odczytano {len(df)} meczów.")
+logging.info(f"Read %d fixtures form Parquet:", len(df))
 
-# 3. Połączenie z PostgreSQL
 connection = psycopg.connect(
     host="localhost",
     port=5432,
@@ -54,7 +65,6 @@ connection = psycopg.connect(
     password=os.environ["POSTGRES_PASSWORD"],
 )
 
-# 4. Utworzenie tabeli i załadowanie danych
 with connection, connection.cursor() as cursor:
     cursor.execute("""
             CREATE TABLE IF NOT EXISTS fixtures (
@@ -73,6 +83,7 @@ with connection, connection.cursor() as cursor:
             );
         """)
 
+# Upsert, so running the pipeline again updates rows instead of duplicating them
     insert_sql = """
             INSERT INTO fixtures (
                 fixture_id,
@@ -108,7 +119,7 @@ with connection, connection.cursor() as cursor:
                 status = EXCLUDED.status;
         """
 
-    # Zamiana wartości Pandas na typy Pythona
+    # Convert pandas values to plain Python types, so psycopg can handle them correctly
     records = []
 
     for row in df.itertuples(index=False):
@@ -122,6 +133,7 @@ with connection, connection.cursor() as cursor:
             row.home_team,
             int(row.away_team_id),
             row.away_team,
+            # Fixtures that have not been played yet have no goals (Null in SQL) 
             None if pd.isna(row.home_goals) else int(row.home_goals),
             None if pd.isna(row.away_goals) else int(row.away_goals),
             row.status,
@@ -138,7 +150,7 @@ with connection, connection.cursor() as cursor:
 
     total = cursor.fetchone()[0]
 
-print("Dane załadowane do PostgreSQL!")
-print(f"Liczba meczów w tabeli: {total}")
+
+logger.info("Loaded fixtures into PostgreSQL: %d rows in the table", total)
 
 connection.close()
