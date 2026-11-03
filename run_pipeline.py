@@ -115,16 +115,13 @@ def run_pipeline_stage(stage_name, function, stages):
             duration,
         )
 
-
+GOLD_VIEW_FILES = ("gold_team_stats.sql","gold_team_recent_form.sql")
 
 def create_gold_view():
     logger.info("Creating Gold view...")
     start_time = time.perf_counter()
 
     try:
-        sql_path = ROOT / "sql" / "gold_team_stats.sql"
-        sql = sql_path.read_text(encoding="utf-8")
-
         with psycopg.connect(
             host="localhost",
             port=5432,
@@ -132,7 +129,9 @@ def create_gold_view():
             user=os.environ["POSTGRES_USER"],
             password=os.environ["POSTGRES_PASSWORD"],
         ) as conn, conn.cursor() as cursor:
-            cursor.execute(sql)
+            for file_name in GOLD_VIEW_FILES:
+                sql_path = (ROOT / "sql" / file_name).read_text(encoding="utf-8")
+                cursor.execute(sql_path)
 
         duration = time.perf_counter() - start_time
 

@@ -153,6 +153,59 @@ def test_create_gold_view_propagates_database_error(monkeypatch):
         run_pipeline.create_gold_view()
 
 
+def test_create_gold_view_executes_all_gold_sql_files(monkeypatch, tmp_path):
+    sql_dir = tmp_path / "sql"
+    sql_dir.mkdir()
+
+    (sql_dir / "gold_team_stats.sql").write_text(
+        "CREATE OR REPLACE VIEW gold_team_stats AS SELECT 1;",
+        encoding="utf-8",
+    )
+    (sql_dir / "gold_team_recent_form.sql").write_text(
+        "CREATE OR REPLACE VIEW gold_team_recent_form AS SELECT 1;",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(run_pipeline, "ROOT", tmp_path)
+    monkeypatch.setenv("POSTGRES_DB", "test_db")
+    monkeypatch.setenv("POSTGRES_USER", "test_user")
+    monkeypatch.setenv("POSTGRES_PASSWORD", "test_password")
+
+    executed = []
+
+    class FakeCursor:
+        def execute(self, statement):
+            executed.append(statement)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc_value, traceback):
+            return False
+
+    class FakeConnection:
+        def cursor(self):
+            return FakeCursor()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc_value, traceback):
+            return False
+
+    monkeypatch.setattr(
+        run_pipeline.psycopg,
+        "connect",
+        lambda **kwargs: FakeConnection(),
+    )
+
+    run_pipeline.create_gold_view()
+
+    assert executed == [
+        "CREATE OR REPLACE VIEW gold_team_stats AS SELECT 1;",
+        "CREATE OR REPLACE VIEW gold_team_recent_form AS SELECT 1;",
+    ]
+
 def test_run_data_quality_checks_passes(monkeypatch, tmp_path):
     sql_dir = tmp_path / "sql"
     sql_dir.mkdir()
