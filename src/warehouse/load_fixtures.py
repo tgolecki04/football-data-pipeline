@@ -91,8 +91,8 @@ with connection, connection.cursor() as cursor:
                 status TEXT
             );
         """)
-        # Replace the existing dataset with the requested league and season
-    cursor.execute("DELETE FROM fixtures;")
+        # Replace only the requested league and season, other seasons stay
+    cursor.execute("DELETE FROM fixtures WHERE league_id = %s AND season = %s;", (LEAGUE_ID, SEASON))
 
 # Upsert, so running the pipeline again updates rows instead of duplicating them
     insert_sql = """
