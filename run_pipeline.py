@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
+
 import psycopg
 from dotenv import load_dotenv
 
@@ -42,9 +43,6 @@ logging.basicConfig(
 
 logger = logging.getLogger(__name__)
 
-def run_data_quality_checks():
-    logger.info("Running data quality checks...")
-    start_time = time.perf_counter()
 
 def positive_int(value):
     """Validate that the value is a positive integer."""
@@ -150,8 +148,6 @@ def create_gold_view():
         raise
 
 
-
-
 def run_data_quality_checks():
     logger.info("Running data quality checks...")
     start_time = time.perf_counter()
@@ -241,6 +237,90 @@ def run_data_quality_checks():
         raise
 
 
+def run_for_season(fetch: bool) -> None:
+    """Run all pipeline stages for the league and season specified in the environment variables."""
+
+    started_at = datetime.now(timezone.utc)
+    pipeline_start_at = time.perf_counter()
+    stages = {
+        "bucket": "NOT_RUN",
+        "ingestion": "SKIPPED",
+        "transformation": "NOT_RUN",
+        "loading": "NOT_RUN",
+        "gold": "NOT_RUN",
+        "data_quality": "NOT_RUN",
+    }
+
+    status = "SUCCESS"
+
+    logger.info(
+        "Starting pipeline for league_id=%s, season=%s",
+        os.environ["LEAGUE_ID"],
+        os.environ["SEASON"],
+    )
+
+    try:
+        run_pipeline_stage(
+            "bucket",
+            lambda: run_script("src/storage/ensure_bucket.py"),
+            stages,
+        )
+
+        if fetch:
+            run_pipeline_stage(
+                "ingestion",
+                lambda: run_script("src/ingestion/fetch_api_football.py"),
+                stages,
+            )
+
+        run_pipeline_stage(
+            "transformation",
+            lambda: run_script("src/processing/transform_fixtures.py"),
+            stages,
+        )
+
+        run_pipeline_stage(
+            "loading",
+            lambda: run_script("src/warehouse/load_fixtures.py"),
+            stages,
+        )
+        run_pipeline_stage("gold", create_gold_view, stages)
+
+        run_pipeline_stage("data_quality", run_data_quality_checks, stages)
+
+    except Exception:
+        status = "FAILED"
+        raise
+
+    finally:
+        finished_at = datetime.now(timezone.utc)
+        total_duration = time.perf_counter() - pipeline_start_at
+
+        try:
+            report = generate_pipeline_report(
+                status=status,
+                started_at=started_at,
+                finished_at=finished_at,
+                league_id=int(os.environ["LEAGUE_ID"]),
+                season=int(os.environ["SEASON"]),
+                stages=stages,
+            )
+
+            logger.info(
+                "Pipeline finished | Status: %s | Duration: %.2fs",
+                report["status"],
+                total_duration,
+            )
+        
+        except Exception:
+            logger.exception("Failed to generate pipeline report")
+
+        logger.info(
+            "Pipeline %s | Total Duration: %.2fs",
+            status,
+            total_duration,
+        )
+
 
 def main():
     parser = argparse.ArgumentParser(
@@ -260,7 +340,8 @@ def main():
     parser.add_argument(
         "--season",
         type=positive_int,
-        help="Season; defaults to the value in .env",
+        nargs="+",
+        help="One or more seasons; defaults to the value in .env",
     )
 
     args = parser.parse_args()
@@ -269,7 +350,7 @@ def main():
         os.environ["LEAGUE_ID"] = str(args.league_id)
 
     if args.season is not None:
-        os.environ["SEASON"] = str(args.season)
+        os.environ["SEASON"] = str(args.season[0])
 
     for variable in ("LEAGUE_ID", "SEASON"):
         if variable not in os.environ:
@@ -284,107 +365,13 @@ def main():
             parser.error(f"Invalid {variable}: {exc}")
 
         os.environ[variable] = str(value)
+
+    seasons = args.season or [int(os.environ["SEASON"])]
+
+    for season in seasons:
+        os.environ["SEASON"] = str(season)
+        run_for_season(args.fetch)
         
-    
-    started_at = datetime.now(timezone.utc)
-    pipeline_start_time = time.perf_counter()
-
-    stages = {
-        "bucket": "NOT_RUN",
-        "ingestion": "SKIPPED",
-        "transformation": "NOT_RUN",
-        "loading": "NOT_RUN",
-        "gold": "NOT_RUN",
-        "data_quality": "NOT_RUN",
-    }
-
-    status = "SUCCESS"
-
-    logger.info("Starting football data pipeline")
-    logger.info(
-        "Configuration: league=%s, season=%s",
-        os.environ["LEAGUE_ID"],
-        os.environ["SEASON"],
-    )
-
-    try:
-        run_pipeline_stage(
-            "bucket",
-            lambda: run_script("src/storage/ensure_bucket.py"),
-            stages,
-        )
-
-        if args.fetch:
-            run_pipeline_stage(
-                "ingestion",
-                lambda: run_script(
-                    "src/ingestion/fetch_api_football.py"
-                ),
-                stages,
-            )
-
-        run_pipeline_stage(
-            "transformation",
-            lambda: run_script(
-                "src/processing/transform_fixtures.py"
-            ),
-            stages,
-        )
-
-        run_pipeline_stage(
-            "loading",
-            lambda: run_script(
-                "src/warehouse/load_fixtures.py"
-            ),
-            stages,
-        )
-
-        run_pipeline_stage(
-            "gold",
-            create_gold_view,
-            stages,
-        )
-
-        run_pipeline_stage(
-            "data_quality",
-            run_data_quality_checks,
-            stages,
-        )
-
-    except Exception:
-        status = "FAILED"
-        raise
-
-    finally:
-        finished_at = datetime.now(timezone.utc)
-        total_duration = time.perf_counter() - pipeline_start_time
-
-        try:
-            report = generate_pipeline_report(
-                status=status,
-                started_at=started_at,
-                finished_at=finished_at,
-                league_id=int(os.environ["LEAGUE_ID"]),
-                season=int(os.environ["SEASON"]),
-                stages=stages,
-            )
-
-            logger.info(
-                "Pipeline report saved | Status: %s | Duration: %.2fs",
-                report["status"],
-                total_duration,
-            )
-
-        except Exception:
-            logger.exception("Failed to generate pipeline report")
-
-        logger.info(
-            "Pipeline %s | Total duration: %.2fs",
-            status,
-            total_duration,
-        )
-
-
 
 if __name__ == "__main__":
     try:
