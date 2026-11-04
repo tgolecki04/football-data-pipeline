@@ -55,6 +55,15 @@ df = pd.read_parquet(
     io.BytesIO(parquet_bytes)
 )
 
+if df.empty:
+    raise ValueError("Silver fixtures DataFrame is empty. Aborting load.")
+
+if not (
+    df["league_id"].eq(LEAGUE_ID).all()
+    and df["season"].eq(SEASON).all()
+):
+    raise ValueError("Loaded fixtures do not match the requested league and season.")
+
 logging.info(f"Read %d fixtures form Parquet:", len(df))
 
 connection = psycopg.connect(
@@ -82,6 +91,8 @@ with connection, connection.cursor() as cursor:
                 status TEXT
             );
         """)
+        # Replace the existing dataset with the requested league and season
+    cursor.execute("DELETE FROM fixtures;")
 
 # Upsert, so running the pipeline again updates rows instead of duplicating them
     insert_sql = """
