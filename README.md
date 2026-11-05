@@ -83,7 +83,7 @@ The pipeline follows the medallion architecture. Data moves through three layers
 4. **Gold.** Two views are calculated from finished matches. `gold_team_stats` holds the standings: played, wins, draws, losses, goals for and against, goal difference and points. `gold_team_recent_form` holds the same numbers for each team's last five matches. Both are grouped by league and season.
 5. **Data quality.** After the Gold view is created, the checks from `sql/data_quality_checks.sql` run against the warehouse. If any check finds problems, the pipeline stops with an error.
 
-`run_pipeline.py` runs all steps in order for each requested season and writes logs to the console and to `logs/pipeline.log`. Each run also saves `reports/pipeline_report.json` and `reports/data_quality_report.json`. Both files are overwritten on every run.
+`run_pipeline.py` runs all steps in order for each requested season and writes logs to the console and to `logs/pipeline.log`. Each run also saves a report in `reports/`: `pipeline_report_league_<id>_season_<year>.json` for the season that was run, and `data_quality_report.json` for the whole warehouse. A report is overwritten only when the same league and season is run again.
 
 ## Data Quality and Reliability
 
