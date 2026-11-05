@@ -8,7 +8,15 @@ import pytest
 import run_pipeline
 from run_pipeline import positive_int, run_script
 
-
+@pytest.fixture(autouse=True)
+def no_report_files(monkeypatch):
+    """Keep tests from writing real pipeline reports to the reports folder."""
+    monkeypatch.setattr(
+        run_pipeline,
+        "generate_pipeline_report",
+        lambda **kwargs: {"status": "SUCCESS"},
+    )
+    
 @pytest.mark.parametrize(
     ("value", "expected"),
     [
