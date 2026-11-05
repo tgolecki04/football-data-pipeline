@@ -1,4 +1,3 @@
-
 import json
 from datetime import datetime, timezone
 from pathlib import Path
@@ -6,7 +5,11 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 REPORT_DIR = ROOT / "reports"
-REPORT_FILE = REPORT_DIR / "pipeline_report.json"
+
+
+def get_report_path(league_id: int, season: int) -> Path:
+    """Return the path of the pipeline report for a league and season."""
+    return REPORT_DIR / f"pipeline_report_league_{league_id}_season_{season}.json"
 
 
 def generate_pipeline_report(
@@ -17,7 +20,7 @@ def generate_pipeline_report(
     season: int,
     stages: dict,
 ) -> dict:
-    """Generate and save a pipeline execution report."""
+    """Generate and save a pipeline execution report for one league and season."""
 
     duration = (finished_at - started_at).total_seconds()
 
@@ -33,7 +36,7 @@ def generate_pipeline_report(
 
     REPORT_DIR.mkdir(parents=True, exist_ok=True)
 
-    REPORT_FILE.write_text(
+    get_report_path(league_id, season).write_text(
         json.dumps(report, indent=4),
         encoding="utf-8",
     )
