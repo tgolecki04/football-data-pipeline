@@ -4,6 +4,7 @@ from pathlib import Path
 
 import psycopg
 import pytest
+import sys
 
 import run_pipeline
 from run_pipeline import positive_int, run_script
@@ -43,9 +44,6 @@ def test_positive_int_rejects_invalid_values(value):
     with pytest.raises(argparse.ArgumentTypeError):
         positive_int(value)
 
-
-
-
 def test_run_script_executes_subprocess(monkeypatch, caplog):
     calls = []
 
@@ -64,15 +62,16 @@ def test_run_script_executes_subprocess(monkeypatch, caplog):
         run_script("src/processing/transform_fixtures.py")
 
     assert len(calls) == 1
-    assert Path(calls[0]["command"][-1]) == (
-    Path(run_pipeline.ROOT)
-    / "src"
-    / "processing"
-    / "transform_fixtures.py"
-)
+
+    assert calls[0]["command"] == [
+        sys.executable,
+        "-m",
+        "src.processing.transform_fixtures",
+    ]
+
+    assert calls[0]["cwd"] == run_pipeline.ROOT
     assert calls[0]["check"] is True
     assert "Script completed" in caplog.text
-
 
 def test_run_script_logs_failure_and_reraises(
     monkeypatch, caplog

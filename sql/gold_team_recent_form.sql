@@ -4,6 +4,7 @@ CREATE OR REPLACE VIEW gold_team_recent_form AS
 WITH team_matches AS (
     -- Home team perspective
     SELECT
+        f.source,
         fixture_id,
         date,
         season,
@@ -12,8 +13,8 @@ WITH team_matches AS (
         home_team AS team_name,
         home_goals AS goals_for,
         away_goals AS goals_against
-    FROM fixtures
-    WHERE status IN ('FT', 'AET', 'PEN')
+    FROM fixtures f
+    WHERE f.status IN ('FT', 'AET', 'PEN', 'FINISHED')
       AND home_goals IS NOT NULL
       AND away_goals IS NOT NULL
 
@@ -21,6 +22,7 @@ WITH team_matches AS (
 
     -- Away team perspective
     SELECT
+        f.source,
         fixture_id,
         date,
         season,
@@ -29,8 +31,8 @@ WITH team_matches AS (
         away_team AS team_name,
         away_goals AS goals_for,
         home_goals AS goals_against
-    FROM fixtures
-    WHERE status IN ('FT', 'AET', 'PEN')
+    FROM fixtures f
+    WHERE f.status IN ('FT', 'AET', 'PEN', 'FINISHED')
       AND home_goals IS NOT NULL
       AND away_goals IS NOT NULL
 ),
@@ -39,7 +41,7 @@ ranked_matches AS (
     SELECT
         *,
         ROW_NUMBER() OVER (
-            PARTITION BY league_id, season, team_id
+            PARTITION BY source, league_id, season, team_id
             ORDER BY date DESC, fixture_id DESC
         ) AS match_rank
     FROM team_matches
@@ -83,11 +85,13 @@ SELECT
         COUNT(*) FILTER (
             WHERE goals_for = goals_against
         )
-    ) AS points
+    ) AS points,
+    source
 
 FROM recent_matches
 
 GROUP BY
+    source,
     season,
     league_id,
     team_id;

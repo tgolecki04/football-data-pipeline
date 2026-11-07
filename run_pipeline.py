@@ -68,10 +68,10 @@ def run_script(script_path):
 
     try:
         subprocess.run(
-            [sys.executable, str(ROOT / script_path)],
-            cwd=ROOT,
-            check=True,
-        )
+        [sys.executable, "-m", script_path.replace("/", ".").removesuffix(".py")],
+        cwd=ROOT,
+        check=True,
+    )
     except subprocess.CalledProcessError:
         duration = time.perf_counter() - start_time
         logger.error(
@@ -237,8 +237,18 @@ def run_data_quality_checks():
         raise
 
 
-def run_for_season(fetch: bool) -> None:
+def run_for_season(fetch: bool, source: str = "api_football") -> None:
     """Run all pipeline stages for the league and season specified in the environment variables."""
+    if source not in ("api_football", "football_data"):
+        raise ValueError(f"Unsupported provider: {source}")
+    if source == "football_data":
+        ingestion_script = "src/ingestion/fetch_football_data.py"
+        transformation_script = "src/processing/transform_football_data.py"
+        loading_script = "src/warehouse/load_football_data.py"
+    else:
+        ingestion_script = "src/ingestion/fetch_api_football.py"
+        transformation_script = "src/processing/transform_fixtures.py"
+        loading_script = "src/warehouse/load_fixtures.py"
 
     started_at = datetime.now(timezone.utc)
     pipeline_start_at = time.perf_counter()
@@ -269,19 +279,19 @@ def run_for_season(fetch: bool) -> None:
         if fetch:
             run_pipeline_stage(
                 "ingestion",
-                lambda: run_script("src/ingestion/fetch_api_football.py"),
+                lambda: run_script(ingestion_script),
                 stages,
             )
 
         run_pipeline_stage(
             "transformation",
-            lambda: run_script("src/processing/transform_fixtures.py"),
+            lambda: run_script(transformation_script),
             stages,
         )
 
         run_pipeline_stage(
             "loading",
-            lambda: run_script("src/warehouse/load_fixtures.py"),
+            lambda: run_script(loading_script),
             stages,
         )
         run_pipeline_stage("gold", create_gold_view, stages)
@@ -301,7 +311,11 @@ def run_for_season(fetch: bool) -> None:
                 status=status,
                 started_at=started_at,
                 finished_at=finished_at,
-                league_id=int(os.environ["LEAGUE_ID"]),
+                league_id=(
+                    2014
+                    if source == "football_data"
+                    else int(os.environ["LEAGUE_ID"])
+                ),
                 season=int(os.environ["SEASON"]),
                 stages=stages,
             )
@@ -326,6 +340,12 @@ def main():
     parser = argparse.ArgumentParser(
         description="Football Data Pipeline"
     )
+    parser.add_argument(
+    "--source",
+    choices=["api_football", "football_data"],
+    default="api_football",
+    help="Select the data provider (default: api_football)",
+)
 
     parser.add_argument(
         "--fetch",
@@ -333,9 +353,29 @@ def main():
         help="Fetch new data from API-FOOTBALL",
     )
     parser.add_argument(
+    "--ingest-only",
+    action="store_true",
+    help="Run only ingestion into Bronze, without Silver or PostgreSQL",
+    )
+    parser.add_argument(
+        "--transform-only",
+        action="store_true",
+        help="Run only the Bronze-to-Silver transformation.",
+    )
+    parser.add_argument(
+        "--load-only",
+        action="store_true",
+        help="Load existing Silver data into PostgreSQL.",
+    )
+    parser.add_argument(
         "--league-id",
         type=positive_int,
         help="League ID; defaults to the value in .env",
+    )
+    parser.add_argument(
+    "--competition",
+    type=str,
+    help="Competition code for football-data.org (e.g. PD)",
     )
     parser.add_argument(
         "--season",
@@ -345,6 +385,39 @@ def main():
     )
 
     args = parser.parse_args()
+    if args.load_only and (args.fetch or args.ingest_only or args.transform_only):
+        parser.error(
+            "--load-only cannot be combined with --fetch, "
+            "--ingest-only or --transform-only."
+        )
+    if args.transform_only and args.ingest_only:
+        parser.error(
+            "--transform-only and --ingest-only cannot be used together."
+        )
+
+    if args.transform_only and args.fetch:
+        parser.error(
+            "--transform-only cannot be combined with --fetch."
+        )
+        
+    if args.source == "football_data":
+        if args.league_id is not None:
+            parser.error(
+                "--league-id is only supported for api_football."
+            )
+
+        if not args.competition or not args.competition.strip():
+            parser.error(
+                "--competition is required for football_data."
+            )
+
+        os.environ["COMPETITION_CODE"] = args.competition.strip().upper()
+
+    else:
+        if args.competition is not None:
+            parser.error(
+                "--competition is only supported for football_data."
+            )
 
     if args.league_id is not None:
         os.environ["LEAGUE_ID"] = str(args.league_id)
@@ -352,7 +425,13 @@ def main():
     if args.season is not None:
         os.environ["SEASON"] = str(args.season[0])
 
-    for variable in ("LEAGUE_ID", "SEASON"):
+    required_variables = (
+        ("LEAGUE_ID", "SEASON")
+        if args.source == "api_football"
+        else ("SEASON",)
+)
+
+    for variable in required_variables:
         if variable not in os.environ:
             parser.error(
                 f"Missing {variable}. Set it in .env "
@@ -367,10 +446,38 @@ def main():
         os.environ[variable] = str(value)
 
     seasons = args.season or [int(os.environ["SEASON"])]
+    if args.ingest_only and not args.fetch:
+        parser.error("--ingest-only requires --fetch.")
 
     for season in seasons:
         os.environ["SEASON"] = str(season)
-        run_for_season(args.fetch)
+        if args.load_only:
+            if args.source == "football_data":
+                script = "src/warehouse/load_football_data.py"
+            else:
+                script = "src/warehouse/load_fixtures.py"
+
+            run_script(script)
+            continue
+        if args.transform_only:
+            script = (
+                "src/processing/transform_football_data.py"
+                if args.source == "football_data"
+                else "src/processing/transform_fixtures.py"
+            )
+            run_script(script)
+            continue
+
+        if args.ingest_only:
+            if args.source == "football_data":
+                script = "src/ingestion/fetch_football_data.py"
+            else:
+                script = "src/ingestion/fetch_api_football.py"
+
+            run_script(script)
+            continue
+
+        run_for_season(args.fetch, source=args.source)
         
 
 if __name__ == "__main__":

@@ -89,6 +89,7 @@ for match in matches:
     goals = match["goals"]
 
     rows.append({
+        "source": "api_football",
         "fixture_id": fixture["id"],
         "date": fixture["date"],
         "league_id": league["id"],
