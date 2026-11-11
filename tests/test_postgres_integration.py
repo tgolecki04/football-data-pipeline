@@ -255,6 +255,11 @@ def test_gold_team_recent_form_separates_leagues_and_seasons():
 @pytest.mark.integration
 @pytest.mark.requires_pipeline_data
 def test_gold_separates_data_sources():
+    if os.getenv("TEST_DATABASE_SEEDED") == "true":
+        pytest.skip(
+            "Requires real multi-source pipeline data, not the CI seed database."
+        )
+        
     with psycopg.connect(
         host="localhost",
         port=5432,
@@ -284,6 +289,7 @@ def test_gold_separates_data_sources():
                 "api_football": 20,
                 "football_data": 20,
             }, f"Unexpected provider statistics in {view}: {results}"
+
             
 @pytest.mark.integration
 def test_fixtures_primary_key_is_source_aware():
