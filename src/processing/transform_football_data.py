@@ -12,6 +12,14 @@ from src.processing.data_quality import validate_fixtures
 
 logger = logging.getLogger(__name__)
 
+COMPETITION_IDS = {
+    "PD": 2014,   # La Liga
+    "PL": 2021,   # Premier League
+    "BL1": 2002,  # Bundesliga
+    "SA": 2019,   # Serie A
+    "FL1": 2015,  # Ligue 1
+}
+
 
 def transform_matches(data: dict) -> pd.DataFrame:
     """Convert football-data.org matches to the common fixtures schema."""
@@ -160,15 +168,28 @@ def main() -> None:
         len(df),
     )
 
-    # Verify that Bronze contains the requested season and competition.
-    if not (
-        df["season"].eq(season).all()
-        and df["league_id"].eq(2014).all()
-    ):
-        raise ValueError("Bronze data does not match the requested season or La Liga.")
+    # Verify that Bronze contains the requested season.
+    if not df["season"].eq(season).all():
+        raise ValueError("Bronze data does not match the requested season.")
+
+    expected_league_id = COMPETITION_IDS.get(competition)
+
+    if expected_league_id is None:
+        raise ValueError(f"Unsupported competition: {competition}")
+
+    if not df["league_id"].eq(expected_league_id).all():
+        raise ValueError(
+            f"Competition {competition} should have league_id "
+            f"{expected_league_id}, but Bronze contains different IDs."
+        )
+
+    logger.info(
+        "Validated competition: %s (league_id=%s)",
+        competition,
+        expected_league_id,
+    )
 
     object_key = save_to_silver(df, competition, season)
-
     logger.info("Transformation completed: %s", object_key)
 
 

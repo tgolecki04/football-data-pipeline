@@ -250,3 +250,67 @@ def test_gold_team_recent_form_separates_leagues_and_seasons():
         (998, 2025, 1, 0, 0, 1, 0),
         (999, 2024, 1, 0, 1, 0, 1),
     ]
+
+
+@pytest.mark.integration
+@pytest.mark.requires_pipeline_data
+def test_gold_separates_data_sources():
+    with psycopg.connect(
+        host="localhost",
+        port=5432,
+        dbname=os.environ["POSTGRES_DB"],
+        user=os.environ["POSTGRES_USER"],
+        password=os.environ["POSTGRES_PASSWORD"],
+    ) as conn, conn.cursor() as cursor:
+
+        for view in ("gold_team_stats", "gold_team_recent_form"):
+            cursor.execute(
+                f"""
+                SELECT source, COUNT(*)
+                FROM {view}
+                WHERE season = 2024
+                  AND (
+                      (source = 'api_football' AND league_id = 140)
+                      OR
+                      (source = 'football_data' AND league_id = 2014)
+                  )
+                GROUP BY source
+                """
+            )
+
+            results = dict(cursor.fetchall())
+
+            assert results == {
+                "api_football": 20,
+                "football_data": 20,
+            }, f"Unexpected provider statistics in {view}: {results}"
+            
+@pytest.mark.integration
+def test_fixtures_primary_key_is_source_aware():
+    with psycopg.connect(
+        host="localhost",
+        port=5432,
+        dbname=os.environ["POSTGRES_DB"],
+        user=os.environ["POSTGRES_USER"],
+        password=os.environ["POSTGRES_PASSWORD"],
+    ) as conn, conn.cursor() as cursor:
+        cursor.execute("""
+            SELECT column_name
+            FROM information_schema.key_column_usage
+            WHERE table_schema = 'public'
+              AND table_name = 'fixtures'
+              AND constraint_name = (
+                  SELECT constraint_name
+                  FROM information_schema.table_constraints
+                  WHERE table_schema = 'public'
+                    AND table_name = 'fixtures'
+                    AND constraint_type = 'PRIMARY KEY'
+              )
+            ORDER BY ordinal_position;
+        """)
+
+        primary_key_columns = [
+            row[0] for row in cursor.fetchall()
+        ]
+
+    assert primary_key_columns == ["source", "fixture_id"]

@@ -15,6 +15,14 @@ from dotenv import load_dotenv
 from src.processing.data_quality_report import generate_data_quality_report
 from src.processing.pipeline_report import generate_pipeline_report
 
+FOOTBALL_DATA_COMPETITION_IDS = {
+    "PD": 2014,
+    "PL": 2021,
+    "BL1": 2002,
+    "SA": 2019,
+    "FL1": 2015,
+}
+
 ROOT = Path(__file__).resolve().parent
 load_dotenv(ROOT / ".env")
 
@@ -312,7 +320,9 @@ def run_for_season(fetch: bool, source: str = "api_football") -> None:
                 started_at=started_at,
                 finished_at=finished_at,
                 league_id=(
-                    2014
+                    FOOTBALL_DATA_COMPETITION_IDS[
+                        os.environ["COMPETITION_CODE"]
+                    ]
                     if source == "football_data"
                     else int(os.environ["LEAGUE_ID"])
                 ),
@@ -411,7 +421,15 @@ def main():
                 "--competition is required for football_data."
             )
 
-        os.environ["COMPETITION_CODE"] = args.competition.strip().upper()
+        competition = args.competition.strip().upper()
+
+        if competition not in FOOTBALL_DATA_COMPETITION_IDS:
+            parser.error(
+                f"Unsupported competition: {competition}. "
+                f"Supported: {', '.join(FOOTBALL_DATA_COMPETITION_IDS)}"
+            )
+
+        os.environ["COMPETITION_CODE"] = competition
 
     else:
         if args.competition is not None:
