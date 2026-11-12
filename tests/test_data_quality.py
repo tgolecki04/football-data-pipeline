@@ -78,3 +78,30 @@ def test_empty_dataframe():
 
     with pytest.raises(ValueError, match="No matches"):
         validate_fixtures(df)
+        
+def test_validate_football_data_fixtures():
+    df = pd.DataFrame([
+        {
+            "source": "football_data",
+            "fixture_id": 498613,
+            "status": "FINISHED",
+            "home_goals": 1,
+            "away_goals": 1,
+        }
+    ])
+
+    validate_fixtures(df)
+    
+def test_validate_football_data_missing_score():
+    df = pd.DataFrame([
+        {
+            "source": "football_data",
+            "fixture_id": 498613,
+            "status": "FINISHED",
+            "home_goals": None,
+            "away_goals": 1,
+        }
+    ])
+
+    with pytest.raises(ValueError, match="Missing scores"):
+        validate_fixtures(df)

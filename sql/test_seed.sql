@@ -1,6 +1,7 @@
 
 CREATE TABLE fixtures (
-    fixture_id BIGINT PRIMARY KEY,
+    source TEXT NOT NULL DEFAULT 'api_football',
+    fixture_id BIGINT NOT NULL,
     date TIMESTAMPTZ,
     league_id INTEGER,
     season INTEGER,
@@ -11,7 +12,8 @@ CREATE TABLE fixtures (
     away_team TEXT,
     home_goals INTEGER,
     away_goals INTEGER,
-    status TEXT
+    status TEXT,
+    PRIMARY KEY (source, fixture_id)
 );
 
 INSERT INTO fixtures (
