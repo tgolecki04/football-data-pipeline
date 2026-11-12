@@ -17,7 +17,10 @@ def load_fixtures() -> pd.DataFrame:
         user=os.environ["POSTGRES_USER"],
         password=os.environ["POSTGRES_PASSWORD"]
     ) as conn, conn.cursor() as cur:
-        cur.execute("SELECT * FROM fixtures ORDER BY date;")
+        cur.execute(
+            "SELECT * FROM fixtures "
+            "WHERE source = 'api_football' AND league_id = 39 "
+            "ORDER BY date;")
         rows = cur.fetchall()
         columns = [column.name for column in cur.description]
 
