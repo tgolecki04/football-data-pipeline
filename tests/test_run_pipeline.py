@@ -8,6 +8,7 @@ import sys
 
 import run_pipeline
 from run_pipeline import positive_int, run_script
+from run_pipeline import FOOTBALL_DATA_COMPETITION_IDS
 
 @pytest.fixture(autouse=True)
 def no_report_files(monkeypatch):
@@ -316,3 +317,16 @@ def test_run_data_quality_checks_fails_on_invalid_data(
 
     with pytest.raises(ValueError, match="duplicate_fixture_ids"):
         run_pipeline.run_data_quality_checks()
+
+@pytest.mark.parametrize(
+    "competition, expected_id",
+    [
+        ("PD", 2014),
+        ("PL", 2021),
+        ("BL1", 2002),
+        ("SA", 2019),
+        ("FL1", 2015),
+    ],
+)
+def test_football_data_competition_ids(competition, expected_id):
+    assert FOOTBALL_DATA_COMPETITION_IDS[competition] == expected_id
