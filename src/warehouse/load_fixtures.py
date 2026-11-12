@@ -10,6 +10,7 @@ import boto3
 import pandas as pd
 import psycopg
 from dotenv import load_dotenv
+from pathlib import Path
 
 logging.basicConfig(
     level=logging.INFO,
@@ -76,22 +77,15 @@ connection = psycopg.connect(
 )
 
 with connection, connection.cursor() as cursor:
-    cursor.execute("""
-            CREATE TABLE IF NOT EXISTS fixtures (
-                fixture_id BIGINT PRIMARY KEY,
-                date TIMESTAMPTZ,
-                league_id INTEGER,
-                season INTEGER,
-                round TEXT,
-                home_team_id INTEGER,
-                home_team TEXT,
-                away_team_id INTEGER,
-                away_team TEXT,
-                home_goals INTEGER,
-                away_goals INTEGER,
-                status TEXT
-            );
-        """)
+    schema_path = (
+        Path(__file__).resolve().parents[2]
+        / "sql"
+        / "create_fixtures.sql"
+    )
+
+    cursor.execute(
+        schema_path.read_text(encoding="utf-8")
+    )
     cursor.execute(
         """
         DELETE FROM fixtures

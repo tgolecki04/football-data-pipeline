@@ -8,6 +8,7 @@ import boto3
 import pandas as pd
 import psycopg
 from dotenv import load_dotenv
+from pathlib import Path
 
 logging.basicConfig(
     level=logging.INFO,
@@ -130,6 +131,15 @@ def load_to_postgres(df: pd.DataFrame, season: int) -> None:
         connect_timeout=5,
     ) as conn:
         with conn.cursor() as cursor:
+            schema_path = (
+                Path(__file__).resolve().parents[2]
+                / "sql"
+                / "create_fixtures.sql"
+            )
+
+            cursor.execute(
+                schema_path.read_text(encoding="utf-8")
+            )
             cursor.execute(
                 """
                 DELETE FROM public.fixtures
