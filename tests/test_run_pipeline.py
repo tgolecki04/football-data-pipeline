@@ -330,3 +330,23 @@ def test_run_data_quality_checks_fails_on_invalid_data(
 )
 def test_football_data_competition_ids(competition, expected_id):
     assert FOOTBALL_DATA_COMPETITION_IDS[competition] == expected_id
+    
+
+def test_rejects_unsupported_competition():
+    result = subprocess.run(
+        [
+            sys.executable,
+            "run_pipeline.py",
+            "--source",
+            "football_data",
+            "--competition",
+            "XYZ",
+            "--season",
+            "2024",
+        ],
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode != 0
+    assert "Unsupported competition: XYZ" in result.stderr

@@ -320,3 +320,42 @@ def test_fixtures_primary_key_is_source_aware():
         ]
 
     assert primary_key_columns == ["source", "fixture_id"]
+    
+@pytest.mark.integration
+@pytest.mark.requires_pipeline_data
+def test_gold_recent_form_separates_competitions():
+    if os.getenv("TEST_DATABASE_SEEDED") == "true":
+        pytest.skip("Requires real Premier League and La Liga data.")
+
+    with psycopg.connect(
+        host="localhost",
+        port=5432,
+        dbname=os.environ["POSTGRES_DB"],
+        user=os.environ["POSTGRES_USER"],
+        password=os.environ["POSTGRES_PASSWORD"],
+    ) as conn, conn.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT
+                league_id,
+                COUNT(*) AS teams,
+                MIN(played) AS min_played,
+                MAX(played) AS max_played
+            FROM gold_team_recent_form
+            WHERE source = 'football_data'
+              AND season = 2024
+              AND league_id IN (2014, 2021)
+            GROUP BY league_id
+            """
+        )
+
+        results = {
+            league_id: (teams, min_played, max_played)
+            for league_id, teams, min_played, max_played
+            in cursor.fetchall()
+        }
+
+        assert results == {
+            2014: (20, 5, 5),
+            2021: (20, 5, 5),
+        }
