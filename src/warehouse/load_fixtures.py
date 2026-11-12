@@ -10,6 +10,7 @@ import boto3
 import pandas as pd
 import psycopg
 from dotenv import load_dotenv
+from pathlib import Path
 
 logging.basicConfig(
     level=logging.INFO,
@@ -26,6 +27,7 @@ BUCKET = os.environ["S3_BUCKET"]
 
 LEAGUE_ID = int(os.environ["LEAGUE_ID"])
 SEASON = int(os.environ["SEASON"])
+SOURCE = "api_football"
 
 SILVER_KEY = (
     f"silver/api_football/league_{LEAGUE_ID}/"
@@ -75,66 +77,67 @@ connection = psycopg.connect(
 )
 
 with connection, connection.cursor() as cursor:
-    cursor.execute("""
-            CREATE TABLE IF NOT EXISTS fixtures (
-                fixture_id BIGINT PRIMARY KEY,
-                date TIMESTAMPTZ,
-                league_id INTEGER,
-                season INTEGER,
-                round TEXT,
-                home_team_id INTEGER,
-                home_team TEXT,
-                away_team_id INTEGER,
-                away_team TEXT,
-                home_goals INTEGER,
-                away_goals INTEGER,
-                status TEXT
-            );
-        """)
-        # Replace only the requested league and season, other seasons stay
-    cursor.execute("DELETE FROM fixtures WHERE league_id = %s AND season = %s;", (LEAGUE_ID, SEASON))
+    schema_path = (
+        Path(__file__).resolve().parents[2]
+        / "sql"
+        / "create_fixtures.sql"
+    )
+
+    cursor.execute(
+        schema_path.read_text(encoding="utf-8")
+    )
+    cursor.execute(
+        """
+        DELETE FROM fixtures
+        WHERE source = %s
+        AND league_id = %s
+        AND season = %s;
+        """,
+        (SOURCE, LEAGUE_ID, SEASON),
+    )
 
 # Upsert, so running the pipeline again updates rows instead of duplicating them
     insert_sql = """
-            INSERT INTO fixtures (
-                fixture_id,
-                date,
-                league_id,
-                season,
-                round,
-                home_team_id,
-                home_team,
-                away_team_id,
-                away_team,
-                home_goals,
-                away_goals,
-                status
-            )
-            VALUES (
-                %s, %s, %s, %s,
-                %s, %s, %s, %s,
-                %s, %s, %s, %s
-            )
-            ON CONFLICT (fixture_id)
-            DO UPDATE SET
-                date = EXCLUDED.date,
-                league_id = EXCLUDED.league_id,
-                season = EXCLUDED.season,
-                round = EXCLUDED.round,
-                home_team_id = EXCLUDED.home_team_id,
-                home_team = EXCLUDED.home_team,
-                away_team_id = EXCLUDED.away_team_id,
-                away_team = EXCLUDED.away_team,
-                home_goals = EXCLUDED.home_goals,
-                away_goals = EXCLUDED.away_goals,
-                status = EXCLUDED.status;
-        """
+        INSERT INTO fixtures (
+            source,
+            fixture_id,
+            date,
+            league_id,
+            season,
+            round,
+            home_team_id,
+            home_team,
+            away_team_id,
+            away_team,
+            home_goals,
+            away_goals,
+            status
+        )
+        VALUES (
+            %s, %s, %s, %s, %s, %s, %s,
+            %s, %s, %s, %s, %s, %s
+        )
+        ON CONFLICT (source, fixture_id)
+        DO UPDATE SET
+            date = EXCLUDED.date,
+            league_id = EXCLUDED.league_id,
+            season = EXCLUDED.season,
+            round = EXCLUDED.round,
+            home_team_id = EXCLUDED.home_team_id,
+            home_team = EXCLUDED.home_team,
+            away_team_id = EXCLUDED.away_team_id,
+            away_team = EXCLUDED.away_team,
+            home_goals = EXCLUDED.home_goals,
+            away_goals = EXCLUDED.away_goals,
+            status = EXCLUDED.status;
+    """
 
     # Convert pandas values to plain Python types, so psycopg can handle them correctly
     records = []
 
     for row in df.itertuples(index=False):
         records.append((
+            SOURCE,
             int(row.fixture_id),
             row.date.to_pydatetime(),
             int(row.league_id),

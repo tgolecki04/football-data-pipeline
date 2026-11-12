@@ -45,7 +45,7 @@ def test_fixtures_and_gold_consistency():
             """
                 SELECT COUNT(*)
                 FROM fixtures
-                WHERE status IN ('FT', 'AET', 'PEN')
+                WHERE status IN ('FT', 'AET', 'PEN', 'FINISHED')
                   AND home_goals IS NOT NULL
                   AND away_goals IS NOT NULL
                 """
@@ -130,6 +130,7 @@ def test_gold_team_recent_form_limits_to_five_matches():
             cursor.execute(
                 """
                 INSERT INTO fixtures (
+                    source,
                     fixture_id,
                     date,
                     league_id,
@@ -144,22 +145,22 @@ def test_gold_team_recent_form_limits_to_five_matches():
                     status
                 )
                 VALUES
-                    (990001, '2024-01-01', 999, 2024, 'Round 1',
+                    ('api_football', 990001, '2024-01-01', 999, 2024, 'Round 1',
                      990, 'Recent Form FC', 991, 'Opponent 1', 1, 0, 'FT'),
 
-                    (990002, '2024-01-02', 999, 2024, 'Round 2',
+                    ('api_football', 990002, '2024-01-02', 999, 2024, 'Round 2',
                      990, 'Recent Form FC', 992, 'Opponent 2', 2, 0, 'FT'),
 
-                    (990003, '2024-01-03', 999, 2024, 'Round 3',
+                    ('api_football', 990003, '2024-01-03', 999, 2024, 'Round 3',
                      990, 'Recent Form FC', 993, 'Opponent 3', 0, 0, 'FT'),
 
-                    (990004, '2024-01-04', 999, 2024, 'Round 4',
+                    ('api_football', 990004, '2024-01-04', 999, 2024, 'Round 4',
                      990, 'Recent Form FC', 994, 'Opponent 4', 0, 1, 'FT'),
 
-                    (990005, '2024-01-05', 999, 2024, 'Round 5',
+                    ('api_football', 990005, '2024-01-05', 999, 2024, 'Round 5',
                      990, 'Recent Form FC', 995, 'Opponent 5', 3, 1, 'FT'),
 
-                    (990006, '2024-01-06', 999, 2024, 'Round 6',
+                    ('api_football', 990006, '2024-01-06', 999, 2024, 'Round 6',
                      990, 'Recent Form FC', 996, 'Opponent 6', 4, 0, 'FT')
                 """
             )
@@ -205,6 +206,7 @@ def test_gold_team_recent_form_separates_leagues_and_seasons():
             cursor.execute(
                 """
                 INSERT INTO fixtures (
+                    source,
                     fixture_id,
                     date,
                     league_id,
@@ -219,13 +221,13 @@ def test_gold_team_recent_form_separates_leagues_and_seasons():
                     status
                 )
                 VALUES
-                    (991001, '2024-01-01', 998, 2024, 'Round 1',
+                    ('api_football', 991001, '2024-01-01', 998, 2024, 'Round 1',
                      990, 'Scope Test FC', 997, 'Opponent A', 2, 0, 'FT'),
 
-                    (991002, '2024-01-02', 998, 2025, 'Round 1',
+                    ('api_football', 991002, '2024-01-02', 998, 2025, 'Round 1',
                      990, 'Scope Test FC', 997, 'Opponent B', 0, 1, 'FT'),
 
-                    (991003, '2024-01-03', 999, 2024, 'Round 1',
+                    ('api_football', 991003, '2024-01-03', 999, 2024, 'Round 1',
                      990, 'Scope Test FC', 997, 'Opponent C', 1, 1, 'FT')
                 """
             )
@@ -248,3 +250,112 @@ def test_gold_team_recent_form_separates_leagues_and_seasons():
         (998, 2025, 1, 0, 0, 1, 0),
         (999, 2024, 1, 0, 1, 0, 1),
     ]
+
+
+@pytest.mark.integration
+@pytest.mark.requires_pipeline_data
+def test_gold_separates_data_sources():
+    if os.getenv("TEST_DATABASE_SEEDED") == "true":
+        pytest.skip(
+            "Requires real multi-source pipeline data, not the CI seed database."
+        )
+        
+    with psycopg.connect(
+        host="localhost",
+        port=5432,
+        dbname=os.environ["POSTGRES_DB"],
+        user=os.environ["POSTGRES_USER"],
+        password=os.environ["POSTGRES_PASSWORD"],
+    ) as conn, conn.cursor() as cursor:
+
+        for view in ("gold_team_stats", "gold_team_recent_form"):
+            cursor.execute(
+                f"""
+                SELECT source, COUNT(*)
+                FROM {view}
+                WHERE season = 2024
+                  AND (
+                      (source = 'api_football' AND league_id = 140)
+                      OR
+                      (source = 'football_data' AND league_id = 2014)
+                  )
+                GROUP BY source
+                """
+            )
+
+            results = dict(cursor.fetchall())
+
+            assert results == {
+                "api_football": 20,
+                "football_data": 20,
+            }, f"Unexpected provider statistics in {view}: {results}"
+
+            
+@pytest.mark.integration
+def test_fixtures_primary_key_is_source_aware():
+    with psycopg.connect(
+        host="localhost",
+        port=5432,
+        dbname=os.environ["POSTGRES_DB"],
+        user=os.environ["POSTGRES_USER"],
+        password=os.environ["POSTGRES_PASSWORD"],
+    ) as conn, conn.cursor() as cursor:
+        cursor.execute("""
+            SELECT column_name
+            FROM information_schema.key_column_usage
+            WHERE table_schema = 'public'
+              AND table_name = 'fixtures'
+              AND constraint_name = (
+                  SELECT constraint_name
+                  FROM information_schema.table_constraints
+                  WHERE table_schema = 'public'
+                    AND table_name = 'fixtures'
+                    AND constraint_type = 'PRIMARY KEY'
+              )
+            ORDER BY ordinal_position;
+        """)
+
+        primary_key_columns = [
+            row[0] for row in cursor.fetchall()
+        ]
+
+    assert primary_key_columns == ["source", "fixture_id"]
+    
+@pytest.mark.integration
+@pytest.mark.requires_pipeline_data
+def test_gold_recent_form_separates_competitions():
+    if os.getenv("TEST_DATABASE_SEEDED") == "true":
+        pytest.skip("Requires real Premier League and La Liga data.")
+
+    with psycopg.connect(
+        host="localhost",
+        port=5432,
+        dbname=os.environ["POSTGRES_DB"],
+        user=os.environ["POSTGRES_USER"],
+        password=os.environ["POSTGRES_PASSWORD"],
+    ) as conn, conn.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT
+                league_id,
+                COUNT(*) AS teams,
+                MIN(played) AS min_played,
+                MAX(played) AS max_played
+            FROM gold_team_recent_form
+            WHERE source = 'football_data'
+              AND season = 2024
+              AND league_id IN (2014, 2021)
+            GROUP BY league_id
+            """
+        )
+
+        results = {
+            league_id: (teams, min_played, max_played)
+            for league_id, teams, min_played, max_played
+            in cursor.fetchall()
+        }
+
+        assert results == {
+            2014: (20, 5, 5),
+            2021: (20, 5, 5),
+        }
