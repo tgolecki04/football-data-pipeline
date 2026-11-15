@@ -71,13 +71,32 @@ jobs:
           RUSTFS_SECRET_KEY: test_secret_key_123
         run: |
           python -m src.storage.ensure_bucket
-          
+
       - name: Verify PostgreSQL connection
         env:
           PGPASSWORD: test_password
         run: |
           psql -h localhost -p 5432 -U test_user -d test_db -c "SELECT 1;"
 
+      - name: Verify PostgreSQL connection with Python
+        env:
+          PGHOST: localhost
+          PGPORT: "5432"
+          PGUSER: test_user
+          PGPASSWORD: test_password
+          PGDATABASE: test_db
+        run: |
+          python - <<'PY'
+          import psycopg
+
+          with psycopg.connect() as conn:
+              with conn.cursor() as cursor:
+                  cursor.execute("SELECT 1;")
+                  result = cursor.fetchone()
+
+          assert result == (1,), f"Unexpected result: {result}"
+          print("Python connected to PostgreSQL successfully")
+          PY
 
       - name: Verify workflow
         run: echo "Pipeline workflow is ready"
