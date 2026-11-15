@@ -1,3 +1,4 @@
+
 name: Football Data Pipeline
 
 on:
@@ -11,9 +12,53 @@ jobs:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
 
+    services:
+      rustfs:
+        image: rustfs/rustfs:latest
+        env:
+          RUSTFS_ACCESS_KEY: test_access_key
+          RUSTFS_SECRET_KEY: test_secret_key_123
+          RUSTFS_ADDRESS: "0.0.0.0:9000"
+        ports:
+          - 9000:9000
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: test_user
+          POSTGRES_PASSWORD: test_password
+          POSTGRES_DB: test_db
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U test_user -d test_db"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Wait for RustFS
+        shell: bash
+        run: |
+          for attempt in {1..30}; do
+            if curl --silent --fail http://localhost:9000/minio/health/live > /dev/null; then
+              echo "RustFS is ready"
+              exit 0
+            fi
+            echo "Waiting for RustFS..."
+            sleep 2
+          done
+          echo "RustFS did not become ready"
+          exit 1
+
+      - name: Verify PostgreSQL connection
+        env:
+          PGPASSWORD: test_password
+        run: |
+          psql -h localhost -p 5432 -U test_user -d test_db -c "SELECT 1;"
+
 
       - name: Verify workflow
         run: echo "Pipeline workflow is ready"
