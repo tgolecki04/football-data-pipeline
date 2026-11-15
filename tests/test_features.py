@@ -1,6 +1,8 @@
 import pandas as pd 
+import pytest
 
-from src.ml.features import to_team_matches
+from src.ml.features import to_team_matches, add_form_features
+
 
 def test_to_team_matches_returns_two_row_per_matches():
 
@@ -26,3 +28,19 @@ def test_to_team_matches_returns_two_row_per_matches():
 
     team_10_match_2 = result[(result["fixture_id"] == 2) & (result["team_id"] == 10)].iloc[0]
     assert team_10_match_2["points"] == 1
+
+
+def test_form_points_ignores_current_match():
+
+    team_matches =  pd.DataFrame({
+        "team_id": [1,1,1],
+        "date": pd.to_datetime(["2022-08-01", "2022-08-08", "2022-08-15"]),
+        "points": [3,0,1],
+        "season": [2022, 2022, 2022]
+    })
+
+    result = add_form_features(team_matches)
+
+    assert pd.isna(result.loc[0,"form_points"])
+    assert result.loc[1, "form_points"] == 3
+    assert result.loc[2, "form_points"] == pytest.approx(1.5)

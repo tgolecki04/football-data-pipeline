@@ -21,12 +21,13 @@ def to_team_matches(fixtures: pd.DataFrame) -> pd.DataFrame:
 
     return team_matches
 
+def add_form_features(team_matches: pd.DataFrame) -> pd.DataFrame:
 
-if __name__ == "__main__":
-    from data import load_fixtures
+    result = team_matches.copy()
 
-    fixtures = load_fixtures()
-    team_matches = to_team_matches(fixtures)
-    
-    
- 
+    result["form_points"] = (
+    result.groupby(["team_id", "season"])["points"]
+    .transform(lambda s: s.shift(1).rolling(5, min_periods=1).mean())
+    )
+
+    return result
