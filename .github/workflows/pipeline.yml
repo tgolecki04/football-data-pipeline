@@ -39,6 +39,16 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
       - name: Wait for RustFS
         shell: bash
         run: |
@@ -53,6 +63,15 @@ jobs:
           echo "RustFS did not become ready"
           exit 1
 
+      - name: Create RustFS bucket
+        env:
+          S3_ENDPOINT: http://localhost:9000
+          S3_BUCKET: football-data
+          RUSTFS_ACCESS_KEY: test_access_key
+          RUSTFS_SECRET_KEY: test_secret_key_123
+        run: |
+          python -m src.storage.ensure_bucket
+          
       - name: Verify PostgreSQL connection
         env:
           PGPASSWORD: test_password
