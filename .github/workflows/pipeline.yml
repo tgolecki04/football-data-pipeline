@@ -72,6 +72,84 @@ jobs:
         run: |
           python -m src.storage.ensure_bucket
 
+      - name: Upload sample Bronze fixtures
+        env:
+          S3_ENDPOINT: http://localhost:9000
+          S3_BUCKET: football-data
+          RUSTFS_ACCESS_KEY: test_access_key
+          RUSTFS_SECRET_KEY: test_secret_key_123
+        run: |
+          python - <<'PY'
+          import os
+          import boto3
+
+          s3 = boto3.client(
+              "s3",
+              endpoint_url=os.environ["S3_ENDPOINT"],
+              aws_access_key_id=os.environ["RUSTFS_ACCESS_KEY"],
+              aws_secret_access_key=os.environ["RUSTFS_SECRET_KEY"],
+              region_name="us-east-1",
+          )
+
+          key = "bronze/api_football/league_39/season_2023/fixtures_sample.json"
+
+          s3.upload_file(
+              "tests/fixtures/api_football_sample.json",
+              os.environ["S3_BUCKET"],
+              key,
+          )
+
+          print(f"Sample Bronze data uploaded: {key}")
+          PY
+
+      - name: Transform Bronze to Silver
+        env:
+          S3_ENDPOINT: http://localhost:9000
+          S3_BUCKET: football-data
+          RUSTFS_ACCESS_KEY: test_access_key
+          RUSTFS_SECRET_KEY: test_secret_key_123
+          LEAGUE_ID: "39"
+          SEASON: "2023"
+        run: |
+          python src/processing/transform_fixtures.py
+
+      - name: Verify Silver Parquet
+        env:
+          S3_ENDPOINT: http://localhost:9000
+          S3_BUCKET: football-data
+          RUSTFS_ACCESS_KEY: test_access_key
+          RUSTFS_SECRET_KEY: test_secret_key_123
+        run: |
+          python - <<'PY'
+          import io
+          import os
+
+          import boto3
+          import pandas as pd
+
+          s3 = boto3.client(
+              "s3",
+              endpoint_url=os.environ["S3_ENDPOINT"],
+              aws_access_key_id=os.environ["RUSTFS_ACCESS_KEY"],
+              aws_secret_access_key=os.environ["RUSTFS_SECRET_KEY"],
+              region_name="us-east-1",
+          )
+
+          key = "silver/api_football/league_39/season_2023/fixtures.parquet"
+
+          response = s3.get_object(
+              Bucket=os.environ["S3_BUCKET"],
+              Key=key,
+          )
+
+          df = pd.read_parquet(io.BytesIO(response["Body"].read()))
+
+          assert len(df) == 2, f"Expected 2 fixtures, got {len(df)}"
+          assert set(df["fixture_id"]) == {900001, 900002}
+
+          print("Silver validation passed: 2 fixtures")
+          PY
+
       - name: Verify PostgreSQL connection
         env:
           PGPASSWORD: test_password

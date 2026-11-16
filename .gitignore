@@ -33,6 +33,7 @@ data/
 *.parquet
 *.csv
 *.json
+!tests/fixtures/api_football_sample.json
 *.jsonl
 
 # Logs

@@ -1,0 +1,60 @@
+{
+  "response": [
+    {
+      "fixture": {
+        "id": 900001,
+        "date": "2024-01-01T15:00:00+00:00",
+        "status": {
+          "short": "FT"
+        }
+      },
+      "league": {
+        "id": 39,
+        "season": 2023,
+        "round": "Regular Season - 1"
+      },
+      "teams": {
+        "home": {
+          "id": 1001,
+          "name": "Test United"
+        },
+        "away": {
+          "id": 1002,
+          "name": "Test City"
+        }
+      },
+      "goals": {
+        "home": 2,
+        "away": 1
+      }
+    },
+    {
+      "fixture": {
+        "id": 900002,
+        "date": "2024-01-02T18:00:00+00:00",
+        "status": {
+          "short": "FT"
+        }
+      },
+      "league": {
+        "id": 39,
+        "season": 2023,
+        "round": "Regular Season - 1"
+      },
+      "teams": {
+        "home": {
+          "id": 1003,
+          "name": "Test Rovers"
+        },
+        "away": {
+          "id": 1004,
+          "name": "Test Athletic"
+        }
+      },
+      "goals": {
+        "home": 0,
+        "away": 0
+      }
+    }
+  ]
+}
