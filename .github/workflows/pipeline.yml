@@ -383,6 +383,78 @@ jobs:
                   conn.rollback()
           PY
 
+      - name: Generate Data Quality report
+        env:
+          PGHOST: localhost
+          PGPORT: "5432"
+          PGUSER: test_user
+          PGPASSWORD: test_password
+          PGDATABASE: test_db
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import psycopg
+
+          from src.processing.data_quality_report import generate_data_quality_report
+
+          sql = Path("sql/data_quality_checks.sql").read_text(
+              encoding="utf-8"
+          )
+
+          queries = [
+              query.strip()
+              for query in sql.split(";")
+              if query.strip()
+          ]
+
+          expected_names = {
+              "duplicate_fixture_ids",
+              "invalid_finished_fixtures",
+              "inconsistent_team_stats",
+              "invalid_team_identifiers",
+          }
+
+          checks = []
+
+          with psycopg.connect() as conn:
+              with conn.cursor() as cursor:
+                  for query in queries:
+                      cursor.execute(query)
+                      check_name, failures = cursor.fetchone()
+
+                      checks.append({
+                          "name": check_name,
+                          "status": "PASS" if failures == 0 else "FAIL",
+                          "failures": failures,
+                      })
+
+          actual_names = [check["name"] for check in checks]
+
+          if len(checks) != 4 or set(actual_names) != expected_names:
+              raise RuntimeError(
+                  f"Unexpected Data Quality checks: {actual_names}"
+              )
+
+          report = generate_data_quality_report(checks)
+
+          print("Data Quality report generated")
+          print(f"Overall status: {report['overall_status']}")
+          print(f"Total checks: {report['total_checks']}")
+          print(f"Failed checks: {report['failed_checks']}")
+
+          if report["overall_status"] != "PASS":
+              raise RuntimeError("Data Quality report contains failures")
+          PY
+
+      - name: Upload Data Quality report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: football-data-quality-report
+          path: reports/data_quality_report.json
+          if-no-files-found: warn
+          retention-days: 30
+
       - name: Verify PostgreSQL connection
         env:
           PGPASSWORD: test_password
