@@ -39,6 +39,22 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Record pipeline start time
+        run: |
+          python - <<'PY'
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          started_at = datetime.now(timezone.utc)
+
+          Path("pipeline_started_at.txt").write_text(
+              started_at.isoformat(),
+              encoding="utf-8",
+          )
+
+          print(f"Pipeline started at: {started_at.isoformat()}")
+          PY
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -483,3 +499,115 @@ jobs:
 
       - name: Verify workflow
         run: echo "Pipeline workflow is ready"
+
+      - name: Generate pipeline execution report
+        env:
+          PGHOST: localhost
+          PGPORT: "5432"
+          PGUSER: test_user
+          PGPASSWORD: test_password
+          PGDATABASE: test_db
+        run: |
+          python - <<'PY'
+          import json
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          import psycopg
+
+          from src.processing.pipeline_report import generate_pipeline_report
+
+          started_at = datetime.fromisoformat(
+              Path("pipeline_started_at.txt").read_text(
+                  encoding="utf-8"
+              ).strip()
+          )
+
+          with psycopg.connect() as conn:
+              with conn.cursor() as cursor:
+                  cursor.execute(
+                      """
+                      SELECT COUNT(*)
+                      FROM fixtures
+                      WHERE source = %s
+                        AND league_id = %s
+                        AND season = %s;
+                      """,
+                      ("api_football", 39, 2023),
+                  )
+                  fixtures_count = cursor.fetchone()[0]
+
+                  cursor.execute(
+                      """
+                      SELECT COUNT(*)
+                      FROM gold_team_stats
+                      WHERE source = %s
+                        AND league_id = %s
+                        AND season = %s;
+                      """,
+                      ("api_football", 39, 2023),
+                  )
+                  teams_count = cursor.fetchone()[0]
+
+          dq_report = json.loads(
+              Path("reports/data_quality_report.json").read_text(
+                  encoding="utf-8"
+              )
+          )
+
+          assert fixtures_count == 2, (
+              f"Expected 2 fixtures, got {fixtures_count}"
+          )
+          assert teams_count == 4, (
+              f"Expected 4 teams, got {teams_count}"
+          )
+          assert dq_report["overall_status"] == "PASS"
+          assert dq_report["total_checks"] == 4
+          assert dq_report["failed_checks"] == 0
+
+          finished_at = datetime.now(timezone.utc)
+
+          stages = {
+              "bronze": {
+                  "status": "PASS",
+                  "fixtures": 2,
+              },
+              "silver": {
+                  "status": "PASS",
+                  "fixtures": 2,
+              },
+              "postgresql": {
+                  "status": "PASS",
+                  "fixtures": fixtures_count,
+              },
+              "gold": {
+                  "status": "PASS",
+                  "teams": teams_count,
+              },
+              "data_quality": {
+                  "status": dq_report["overall_status"],
+                  "checks": dq_report["total_checks"],
+                  "failed_checks": dq_report["failed_checks"],
+              },
+          }
+
+          report = generate_pipeline_report(
+              status="SUCCESS",
+              started_at=started_at,
+              finished_at=finished_at,
+              league_id=39,
+              season=2023,
+              stages=stages,
+          )
+
+          print(json.dumps(report, indent=2))
+          PY
+
+      - name: Upload pipeline execution report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: football-pipeline-execution-report
+          path: reports/pipeline_report_league_39_season_2023.json
+          if-no-files-found: warn
+          retention-days: 30
