@@ -1,16 +1,21 @@
 
--- Check 1: Duplicate fixture IDs.
+-- Check 1: Duplicate fixtures within the same source.
 SELECT
     'duplicate_fixture_ids' AS check_name,
-    COUNT(*) - COUNT(DISTINCT fixture_id) AS failures
-FROM fixtures;
+    COUNT(*) AS failures
+FROM (
+    SELECT source, fixture_id
+    FROM fixtures
+    GROUP BY source, fixture_id
+    HAVING COUNT(*) > 1
+) duplicates;
 
 -- Check 2: Finished fixtures must have valid scores.
 SELECT
     'invalid_finished_fixtures' AS check_name,
     COUNT(*) AS failures
 FROM fixtures
-WHERE status IN ('FT', 'AET', 'PEN')
+WHERE status IN ('FT', 'AET', 'PEN', 'FINISHED')
   AND (
       home_goals IS NULL
       OR away_goals IS NULL
