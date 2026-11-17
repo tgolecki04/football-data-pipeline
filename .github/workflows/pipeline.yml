@@ -9,7 +9,6 @@ permissions:
 
 jobs:
   pipeline:
-    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
 
     services:
@@ -166,6 +165,18 @@ jobs:
           print("Silver validation passed: 2 fixtures")
           PY
 
+      - name: Apply PostgreSQL schema and migrations
+        env:
+          PGHOST: localhost
+          PGPORT: "5432"
+          PGUSER: test_user
+          PGPASSWORD: test_password
+          PGDATABASE: test_db
+        run: |
+          psql -X -v ON_ERROR_STOP=1 -f sql/create_fixtures.sql
+          psql -X -v ON_ERROR_STOP=1 -f sql/001_add_multi_source_support.sql
+          psql -X -v ON_ERROR_STOP=1 -f sql/002_add_fixtures_constraints.sql
+
       - name: Load Silver fixtures into PostgreSQL
         env:
           S3_ENDPOINT: http://localhost:9000
@@ -215,6 +226,45 @@ jobs:
           print("PostgreSQL validation passed: 2 fixtures")
           for row in rows:
               print(row)
+          PY
+
+      - name: Verify PostgreSQL rejects invalid scores
+        env:
+          PGHOST: localhost
+          PGPORT: "5432"
+          PGUSER: test_user
+          PGPASSWORD: test_password
+          PGDATABASE: test_db
+        run: |
+          python - <<'PY'
+          import psycopg
+          from psycopg import errors
+
+          with psycopg.connect() as conn:
+              with conn.cursor() as cursor:
+                  try:
+                      cursor.execute("SAVEPOINT invalid_score_test")
+
+                      cursor.execute(
+                          """
+                          UPDATE public.fixtures
+                          SET home_goals = -1
+                          WHERE source = %s
+                            AND fixture_id = %s
+                          """,
+                          ("api_football", 900001),
+                      )
+                  except errors.CheckViolation:
+                      cursor.execute(
+                          "ROLLBACK TO SAVEPOINT invalid_score_test"
+                      )
+                      print("PASS: PostgreSQL rejected negative goals")
+                  else:
+                      raise AssertionError(
+                          "FAIL: PostgreSQL accepted negative goals"
+                      )
+
+              conn.rollback()
           PY
 
       - name: Create Gold views
@@ -370,6 +420,12 @@ jobs:
           with psycopg.connect() as conn:
               try:
                   with conn.cursor() as cursor:
+                      cursor.execute(
+                          """
+                          CREATE TEMP TABLE fixtures
+                          AS TABLE public.fixtures;
+                          """
+                        )
                       cursor.execute(
                           """
                           UPDATE fixtures
