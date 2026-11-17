@@ -150,6 +150,57 @@ jobs:
           print("Silver validation passed: 2 fixtures")
           PY
 
+      - name: Load Silver fixtures into PostgreSQL
+        env:
+          S3_ENDPOINT: http://localhost:9000
+          S3_BUCKET: football-data
+          RUSTFS_ACCESS_KEY: test_access_key
+          RUSTFS_SECRET_KEY: test_secret_key_123
+          LEAGUE_ID: "39"
+          SEASON: "2023"
+          POSTGRES_HOST: localhost
+          POSTGRES_PORT: "5432"
+          POSTGRES_DB: test_db
+          POSTGRES_USER: test_user
+          POSTGRES_PASSWORD: test_password
+        run: |
+          python src/warehouse/load_fixtures.py
+
+      - name: Verify loaded fixtures in PostgreSQL
+        env:
+          PGHOST: localhost
+          PGPORT: "5432"
+          PGUSER: test_user
+          PGPASSWORD: test_password
+          PGDATABASE: test_db
+        run: |
+          python - <<'PY'
+          import psycopg
+
+          with psycopg.connect() as conn:
+              with conn.cursor() as cursor:
+                  cursor.execute(
+                      """
+                      SELECT fixture_id, home_team, away_team
+                      FROM fixtures
+                      WHERE source = %s
+                        AND league_id = %s
+                        AND season = %s
+                      ORDER BY fixture_id;
+                      """,
+                      ("api_football", 39, 2023),
+                  )
+
+                  rows = cursor.fetchall()
+
+          assert len(rows) == 2, f"Expected 2 fixtures, got {len(rows)}"
+          assert [row[0] for row in rows] == [900001, 900002]
+
+          print("PostgreSQL validation passed: 2 fixtures")
+          for row in rows:
+              print(row)
+          PY
+
       - name: Verify PostgreSQL connection
         env:
           PGPASSWORD: test_password
