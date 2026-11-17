@@ -254,6 +254,135 @@ jobs:
                       print(f"{view}: validation passed (4 teams)")
           PY
 
+      - name: Run SQL Data Quality checks
+        env:
+          PGHOST: localhost
+          PGPORT: "5432"
+          PGUSER: test_user
+          PGPASSWORD: test_password
+          PGDATABASE: test_db
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import psycopg
+
+          expected_checks = {
+              "duplicate_fixture_ids",
+              "invalid_finished_fixtures",
+              "inconsistent_team_stats",
+              "invalid_team_identifiers",
+          }
+
+          sql = Path("sql/data_quality_checks.sql").read_text(
+              encoding="utf-8"
+          )
+
+          queries = [
+              query.strip()
+              for query in sql.split(";")
+              if query.strip()
+          ]
+
+          results = {}
+
+          with psycopg.connect() as conn:
+              with conn.cursor() as cursor:
+                  for query in queries:
+                      cursor.execute(query)
+                      row = cursor.fetchone()
+
+                      if row is None:
+                          raise RuntimeError(
+                              "Data Quality query returned no result"
+                          )
+
+                      check_name, failures = row
+
+                      if check_name in results:
+                          raise RuntimeError(
+                              f"Duplicate check: {check_name}"
+                          )
+
+                      results[check_name] = failures
+                      print(f"{check_name}: {failures} failures")
+
+          if set(results) != expected_checks:
+              missing = expected_checks - set(results)
+              unexpected = set(results) - expected_checks
+
+              raise RuntimeError(
+                  f"Invalid Data Quality checks. "
+                  f"Missing: {missing}, unexpected: {unexpected}"
+              )
+
+          failed_checks = {
+              name: count
+              for name, count in results.items()
+              if not isinstance(count, int) or count != 0
+          }
+
+          if failed_checks:
+              raise RuntimeError(
+                  f"Data Quality validation failed: {failed_checks}"
+              )
+
+          print("All 4 SQL Data Quality checks passed")
+          PY
+
+      - name: Verify Data Quality detects invalid scores
+        env:
+          PGHOST: localhost
+          PGPORT: "5432"
+          PGUSER: test_user
+          PGPASSWORD: test_password
+          PGDATABASE: test_db
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import psycopg
+
+          sql = Path("sql/data_quality_checks.sql").read_text(
+              encoding="utf-8"
+          )
+
+          queries = [
+              query.strip()
+              for query in sql.split(";")
+              if query.strip()
+          ]
+
+          with psycopg.connect() as conn:
+              try:
+                  with conn.cursor() as cursor:
+                      cursor.execute(
+                          """
+                          UPDATE fixtures
+                          SET home_goals = -1
+                          WHERE source = %s
+                            AND fixture_id = %s;
+                          """,
+                          ("api_football", 900001),
+                      )
+
+                      assert cursor.rowcount == 1
+
+                      detected = False
+
+                      for query in queries:
+                          cursor.execute(query)
+                          check_name, failures = cursor.fetchone()
+
+                          if check_name == "invalid_finished_fixtures":
+                              assert failures > 0
+                              detected = True
+
+                      assert detected, "Invalid scores were not detected"
+
+                      print("Data Quality correctly detected invalid scores")
+              finally:
+                  conn.rollback()
+          PY
+
       - name: Verify PostgreSQL connection
         env:
           PGPASSWORD: test_password
