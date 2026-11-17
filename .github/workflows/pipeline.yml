@@ -39,6 +39,22 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Record pipeline start time
+        run: |
+          python - <<'PY'
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          started_at = datetime.now(timezone.utc)
+
+          Path("pipeline_started_at.txt").write_text(
+              started_at.isoformat(),
+              encoding="utf-8",
+          )
+
+          print(f"Pipeline started at: {started_at.isoformat()}")
+          PY
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -383,6 +399,78 @@ jobs:
                   conn.rollback()
           PY
 
+      - name: Generate Data Quality report
+        env:
+          PGHOST: localhost
+          PGPORT: "5432"
+          PGUSER: test_user
+          PGPASSWORD: test_password
+          PGDATABASE: test_db
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import psycopg
+
+          from src.processing.data_quality_report import generate_data_quality_report
+
+          sql = Path("sql/data_quality_checks.sql").read_text(
+              encoding="utf-8"
+          )
+
+          queries = [
+              query.strip()
+              for query in sql.split(";")
+              if query.strip()
+          ]
+
+          expected_names = {
+              "duplicate_fixture_ids",
+              "invalid_finished_fixtures",
+              "inconsistent_team_stats",
+              "invalid_team_identifiers",
+          }
+
+          checks = []
+
+          with psycopg.connect() as conn:
+              with conn.cursor() as cursor:
+                  for query in queries:
+                      cursor.execute(query)
+                      check_name, failures = cursor.fetchone()
+
+                      checks.append({
+                          "name": check_name,
+                          "status": "PASS" if failures == 0 else "FAIL",
+                          "failures": failures,
+                      })
+
+          actual_names = [check["name"] for check in checks]
+
+          if len(checks) != 4 or set(actual_names) != expected_names:
+              raise RuntimeError(
+                  f"Unexpected Data Quality checks: {actual_names}"
+              )
+
+          report = generate_data_quality_report(checks)
+
+          print("Data Quality report generated")
+          print(f"Overall status: {report['overall_status']}")
+          print(f"Total checks: {report['total_checks']}")
+          print(f"Failed checks: {report['failed_checks']}")
+
+          if report["overall_status"] != "PASS":
+              raise RuntimeError("Data Quality report contains failures")
+          PY
+
+      - name: Upload Data Quality report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: football-data-quality-report
+          path: reports/data_quality_report.json
+          if-no-files-found: warn
+          retention-days: 30
+
       - name: Verify PostgreSQL connection
         env:
           PGPASSWORD: test_password
@@ -411,3 +499,115 @@ jobs:
 
       - name: Verify workflow
         run: echo "Pipeline workflow is ready"
+
+      - name: Generate pipeline execution report
+        env:
+          PGHOST: localhost
+          PGPORT: "5432"
+          PGUSER: test_user
+          PGPASSWORD: test_password
+          PGDATABASE: test_db
+        run: |
+          python - <<'PY'
+          import json
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          import psycopg
+
+          from src.processing.pipeline_report import generate_pipeline_report
+
+          started_at = datetime.fromisoformat(
+              Path("pipeline_started_at.txt").read_text(
+                  encoding="utf-8"
+              ).strip()
+          )
+
+          with psycopg.connect() as conn:
+              with conn.cursor() as cursor:
+                  cursor.execute(
+                      """
+                      SELECT COUNT(*)
+                      FROM fixtures
+                      WHERE source = %s
+                        AND league_id = %s
+                        AND season = %s;
+                      """,
+                      ("api_football", 39, 2023),
+                  )
+                  fixtures_count = cursor.fetchone()[0]
+
+                  cursor.execute(
+                      """
+                      SELECT COUNT(*)
+                      FROM gold_team_stats
+                      WHERE source = %s
+                        AND league_id = %s
+                        AND season = %s;
+                      """,
+                      ("api_football", 39, 2023),
+                  )
+                  teams_count = cursor.fetchone()[0]
+
+          dq_report = json.loads(
+              Path("reports/data_quality_report.json").read_text(
+                  encoding="utf-8"
+              )
+          )
+
+          assert fixtures_count == 2, (
+              f"Expected 2 fixtures, got {fixtures_count}"
+          )
+          assert teams_count == 4, (
+              f"Expected 4 teams, got {teams_count}"
+          )
+          assert dq_report["overall_status"] == "PASS"
+          assert dq_report["total_checks"] == 4
+          assert dq_report["failed_checks"] == 0
+
+          finished_at = datetime.now(timezone.utc)
+
+          stages = {
+              "bronze": {
+                  "status": "PASS",
+                  "fixtures": 2,
+              },
+              "silver": {
+                  "status": "PASS",
+                  "fixtures": 2,
+              },
+              "postgresql": {
+                  "status": "PASS",
+                  "fixtures": fixtures_count,
+              },
+              "gold": {
+                  "status": "PASS",
+                  "teams": teams_count,
+              },
+              "data_quality": {
+                  "status": dq_report["overall_status"],
+                  "checks": dq_report["total_checks"],
+                  "failed_checks": dq_report["failed_checks"],
+              },
+          }
+
+          report = generate_pipeline_report(
+              status="SUCCESS",
+              started_at=started_at,
+              finished_at=finished_at,
+              league_id=39,
+              season=2023,
+              stages=stages,
+          )
+
+          print(json.dumps(report, indent=2))
+          PY
+
+      - name: Upload pipeline execution report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: football-pipeline-execution-report
+          path: reports/pipeline_report_league_39_season_2023.json
+          if-no-files-found: warn
+          retention-days: 30
