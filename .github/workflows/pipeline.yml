@@ -201,6 +201,59 @@ jobs:
               print(row)
           PY
 
+      - name: Create Gold views
+        env:
+          PGHOST: localhost
+          PGPORT: "5432"
+          PGUSER: test_user
+          PGPASSWORD: test_password
+          PGDATABASE: test_db
+        run: |
+          psql -v ON_ERROR_STOP=1 -f sql/gold_team_stats.sql
+          psql -v ON_ERROR_STOP=1 -f sql/gold_team_recent_form.sql
+
+      - name: Verify Gold views
+        env:
+          PGHOST: localhost
+          PGPORT: "5432"
+          PGUSER: test_user
+          PGPASSWORD: test_password
+          PGDATABASE: test_db
+        run: |
+          python - <<'PY'
+          import psycopg
+
+          with psycopg.connect() as conn:
+              with conn.cursor() as cursor:
+                  for view in ("gold_team_stats", "gold_team_recent_form"):
+                      cursor.execute(
+                          f"""
+                          SELECT team_id, played, wins, draws, losses, points
+                          FROM {view}
+                          WHERE source = %s
+                            AND league_id = %s
+                            AND season = %s
+                          ORDER BY team_id;
+                          """,
+                          ("api_football", 39, 2023),
+                      )
+
+                      rows = cursor.fetchall()
+
+                      expected = [
+                          (1001, 1, 1, 0, 0, 3),
+                          (1002, 1, 0, 0, 1, 0),
+                          (1003, 1, 0, 1, 0, 1),
+                          (1004, 1, 0, 1, 0, 1),
+                      ]
+
+                      assert rows == expected, (
+                          f"Unexpected results in {view}: {rows}"
+                      )
+
+                      print(f"{view}: validation passed (4 teams)")
+          PY
+
       - name: Verify PostgreSQL connection
         env:
           PGPASSWORD: test_password
