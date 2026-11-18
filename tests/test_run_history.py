@@ -1,0 +1,151 @@
+
+"""Tests for local pipeline execution history."""
+
+import json
+
+import pytest
+
+from src.processing.run_history import (
+    load_run_history,
+    print_run_history,
+)
+
+
+def save_report(
+    root,
+    run_id,
+    started_at,
+    status="SUCCESS",
+    source="api_football",
+):
+    run_dir = root / run_id
+    run_dir.mkdir()
+
+    (run_dir / "pipeline.json").write_text(
+        json.dumps({
+            "run_id": run_id,
+            "started_at": started_at,
+            "source": source,
+            "league_id": 39,
+            "season": 2023,
+            "status": status,
+            "duration_seconds": 2.5,
+        }),
+        encoding="utf-8",
+    )
+
+
+def test_history_returns_newest_runs_first(tmp_path):
+    save_report(
+        tmp_path,
+        "run_001",
+        "2026-11-18T10:00:00+00:00",
+    )
+    save_report(
+        tmp_path,
+        "run_003",
+        "2026-11-18T12:00:00+00:00",
+    )
+    save_report(
+        tmp_path,
+        "run_002",
+        "2026-11-18T11:00:00+00:00",
+    )
+
+    history = load_run_history(tmp_path)
+
+    assert [run["run_id"] for run in history] == [
+        "run_003",
+        "run_002",
+        "run_001",
+    ]
+
+
+def test_history_limit(tmp_path):
+    for number in range(5):
+        save_report(
+            tmp_path,
+            f"run_{number}",
+            f"2026-11-18T10:00:0{number}+00:00",
+        )
+
+    history = load_run_history(
+        tmp_path,
+        limit=2,
+    )
+
+    assert len(history) == 2
+
+
+def test_history_filters_failed_runs(tmp_path):
+    save_report(
+        tmp_path,
+        "successful",
+        "2026-11-18T10:00:00+00:00",
+    )
+    save_report(
+        tmp_path,
+        "failed",
+        "2026-11-18T11:00:00+00:00",
+        status="FAILED",
+    )
+
+    history = load_run_history(
+        tmp_path,
+        status="FAILED",
+    )
+
+    assert len(history) == 1
+    assert history[0]["run_id"] == "failed"
+
+
+def test_history_skips_invalid_json(tmp_path):
+    save_report(
+        tmp_path,
+        "valid",
+        "2026-11-18T10:00:00+00:00",
+    )
+
+    bad_dir = tmp_path / "invalid"
+    bad_dir.mkdir()
+    (bad_dir / "pipeline.json").write_text(
+        "{invalid-json",
+        encoding="utf-8",
+    )
+
+    history = load_run_history(tmp_path)
+
+    assert len(history) == 1
+    assert history[0]["run_id"] == "valid"
+
+
+def test_history_empty_directory(tmp_path, capsys):
+    history = load_run_history(tmp_path)
+
+    assert history == []
+
+    print_run_history(history)
+
+    assert "No pipeline execution reports" in capsys.readouterr().out
+
+
+def test_history_prints_rows(tmp_path, capsys):
+    save_report(
+        tmp_path,
+        "run_001",
+        "2026-11-18T10:00:00+00:00",
+    )
+
+    print_run_history(load_run_history(tmp_path))
+
+    output = capsys.readouterr().out
+
+    assert "RUN ID" in output
+    assert "run_001" in output
+    assert "api_football" in output
+    assert "SUCCESS" in output
+
+
+def test_history_rejects_invalid_limit(tmp_path):
+    with pytest.raises(ValueError, match="positive"):
+        load_run_history(tmp_path, limit=0)

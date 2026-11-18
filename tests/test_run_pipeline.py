@@ -7,8 +7,7 @@ import pytest
 import sys
 
 import run_pipeline
-from run_pipeline import positive_int, run_script
-from run_pipeline import FOOTBALL_DATA_COMPETITION_IDS
+from run_pipeline import positive_int, run_script, FOOTBALL_DATA_COMPETITION_IDS, ROOT
 
 @pytest.fixture(autouse=True)
 def no_report_files(monkeypatch):
@@ -45,50 +44,94 @@ def test_positive_int_rejects_invalid_values(value):
     with pytest.raises(argparse.ArgumentTypeError):
         positive_int(value)
 
+
 def test_run_script_executes_subprocess(monkeypatch, caplog):
+    import io
+    from unittest.mock import MagicMock
+
     calls = []
 
-    def mock_run(command, cwd, check):
-        calls.append(
-            {
-                "command": command,
-                "cwd": cwd,
-                "check": check,
-            }
-        )
+    process = MagicMock()
+    process.stdout = io.StringIO(
+        "Synthetic transformation completed\n"
+    )
+    process.wait.return_value = 0
+    process.__enter__.return_value = process
 
-    monkeypatch.setattr(subprocess, "run", mock_run)
+    def mock_popen(command, **kwargs):
+        calls.append({
+            "command": command,
+            "kwargs": kwargs,
+        })
+        return process
+
+    monkeypatch.setattr(subprocess, "Popen", mock_popen)
 
     with caplog.at_level("INFO"):
-        run_script("src/processing/transform_api_football.py")
+        run_script(
+            "src/processing/transform_api_football.py"
+        )
 
     assert len(calls) == 1
 
-    assert calls[0]["command"] == [
+    call = calls[0]
+    command = call["command"]
+    kwargs = call["kwargs"]
+
+    assert command == [
         sys.executable,
+        "-u",
         "-m",
         "src.processing.transform_api_football",
     ]
 
-    assert calls[0]["cwd"] == run_pipeline.ROOT
-    assert calls[0]["check"] is True
-    assert "Script completed" in caplog.text
+    assert kwargs["cwd"] == ROOT
+    assert kwargs["stdout"] == subprocess.PIPE
+    assert kwargs["stderr"] == subprocess.STDOUT
+    assert kwargs["text"] is True
+
+    assert "Synthetic transformation completed" in caplog.text
+    assert "Child process completed" in caplog.text
+
+
 
 def test_run_script_logs_failure_and_reraises(
     monkeypatch, caplog
 ):
-    def mock_run(command, cwd, check):
-        raise subprocess.CalledProcessError(
-            returncode=1,
-            cmd=command,
-        )
+    import io
+    from unittest.mock import MagicMock
 
-    monkeypatch.setattr(subprocess, "run", mock_run)
+    process = MagicMock()
+    process.stdout = io.StringIO(
+        "Synthetic loader failure\n"
+    )
+    process.wait.return_value = 1
+    process.__enter__.return_value = process
 
-    with caplog.at_level("ERROR"), pytest.raises(subprocess.CalledProcessError):
-        run_script("src/processing/transform_api_football.py")
+    def mock_popen(command, **kwargs):
+        return process
 
-    assert "Script failed" in caplog.text
+    monkeypatch.setattr(
+        subprocess,
+        "Popen",
+        mock_popen,
+    )
+
+    with caplog.at_level("ERROR"):
+        with pytest.raises(
+            subprocess.CalledProcessError
+        ) as exc_info:
+            run_script(
+                "src/warehouse/load_to_postgres.py",
+                "--source",
+                "api_football",
+            )
+
+    assert exc_info.value.returncode == 1
+
+    assert "Child process failed" in caplog.text
+    assert "exit_code=1" in caplog.text
+
 
 
 def test_main_stops_when_a_script_fails(monkeypatch):
@@ -129,8 +172,13 @@ def test_main_ensures_bucket_before_others_steps(monkeypatch):
         "run_script",
         lambda script_path, *args: calls.append(script_path),
     )
+
     monkeypatch.setattr(run_pipeline, "create_gold_view", lambda: None)
-    monkeypatch.setattr(run_pipeline, "run_data_quality_checks", lambda: None)
+    monkeypatch.setattr(
+        run_pipeline,
+        "run_data_quality_checks",
+        lambda **kwargs: None,
+    )
 
     monkeypatch.setattr(
         "sys.argv",
@@ -369,10 +417,11 @@ def test_rejects_unsupported_competition():
         ),
     ],
 )
+
 def test_load_only_uses_shared_loader_for_both_sources(
     monkeypatch, source, extra_args
 ):
-    """Both providers must use the same PostgreSQL loader."""
+    """Both providers must select the shared loading mode."""
 
     calls = []
 
@@ -394,15 +443,13 @@ def test_load_only_uses_shared_loader_for_both_sources(
 
     monkeypatch.setattr(
         run_pipeline,
-        "run_script",
-        lambda path, *args: calls.append((path, args)),
+        "run_partial_pipeline",
+        lambda mode, source: calls.append((mode, source)),
     )
 
     run_pipeline.main()
 
     assert calls == [
-        (
-            "src/warehouse/load_to_postgres.py",
-            ("--source", source),
-        )
+        ("loading", source),
     ]
+
