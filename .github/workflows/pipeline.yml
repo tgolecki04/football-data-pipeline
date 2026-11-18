@@ -413,14 +413,15 @@ jobs:
           buffer = io.BytesIO()
           incomplete.to_parquet(buffer, index=False)
 
+          
           try:
-              s3.put_object(
-                  Bucket=bucket,
-                  Key=key,
-                  Body=buffer.getvalue(),
-              )
+            s3.put_object(
+                Bucket=bucket,
+                Key=key,
+                Body=buffer.getvalue(),
+            )
 
-             result = subprocess.run(
+            result = subprocess.run(
                 [
                     sys.executable,
                     "-m",
@@ -428,62 +429,60 @@ jobs:
                     "--source",
                     "api_football",
                 ],
-                  capture_output=True,
-                  text=True,
-                  check=False,
-              )
+                capture_output=True,
+                text=True,
+                check=False,
+            )
 
-              assert result.returncode != 0, (
-                  "Loader unexpectedly accepted incomplete Silver"
-              )
+            output = result.stdout + result.stderr
 
-              assert "Unsafe replacement blocked" in (
-                  result.stdout + result.stderr
-              ), (
-                  "Loader failed, but not because of load_guard:\n"
-                  + result.stdout + result.stderr
-              )
+            assert result.returncode != 0, (
+                "Loader unexpectedly accepted incomplete Silver."
+            )
 
-              with psycopg.connect(
-                  host="localhost",
-                  port=5432,
-                  dbname="test_db",
-                  user="test_user",
-                  password="test_password",
-              ) as conn:
-                  with conn.cursor() as cursor:
-                      cursor.execute(
-                          """
-                          SELECT fixture_id
-                          FROM public.fixtures
-                          WHERE source = 'api_football'
-                            AND league_id = 39
-                            AND season = 2023
-                          ORDER BY fixture_id;
-                          """
-                      )
+            assert "Unsafe replacement blocked" in output, (
+                "Loader failed, but not because of load_guard:\n"
+                + output
+            )
 
-                      ids = [
-                          row[0] for row in cursor.fetchall()
-                      ]
+            with psycopg.connect(
+                host="localhost",
+                port=5432,
+                dbname="test_db",
+                user="test_user",
+                password="test_password",
+            ) as conn:
+                with conn.cursor() as cursor:
+                    cursor.execute(
+                        """
+                        SELECT fixture_id
+                        FROM public.fixtures
+                        WHERE source = 'api_football'
+                        AND league_id = 39
+                        AND season = 2023
+                        ORDER BY fixture_id
+                        """
+                    )
 
-              assert ids == [900001, 900002], (
-                  f"Fixtures changed unexpectedly: {ids}"
-              )
+                    ids = [
+                        row[0]
+                        for row in cursor.fetchall()
+                    ]
 
-              print(
-                  "PASS: loader blocked incomplete Silver"
-              )
-              print(
-                  "PASS: both fixtures remain in PostgreSQL"
-              )
+            assert ids == [900001, 900002], (
+                f"PostgreSQL data changed: {ids}"
+            )
+
+            print("PASS: incomplete Silver rejected")
+            print("PASS: both original fixtures preserved")
 
           finally:
-              s3.put_object(
-                  Bucket=bucket,
-                  Key=key,
-                  Body=original,
-              )
+            s3.put_object(
+                Bucket=bucket,
+                Key=key,
+                Body=original,
+            )
+
           PY
 
       - name: Verify PostgreSQL rejects invalid scores
