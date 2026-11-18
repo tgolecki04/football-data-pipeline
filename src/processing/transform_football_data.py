@@ -9,6 +9,7 @@ import os
 import boto3
 from dotenv import load_dotenv
 from src.processing.data_quality import validate_fixtures
+from src.processing.silver_schema import validate_silver_schema
 
 logger = logging.getLogger(__name__)
 
@@ -161,6 +162,7 @@ def main() -> None:
     data = read_bronze(competition, season)
 
     df = transform_matches(data)
+    validate_silver_schema(df, "football_data")
     validate_fixtures(df)
 
     logger.info(
