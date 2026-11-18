@@ -14,6 +14,7 @@ from dotenv import load_dotenv
 
 from src.processing.data_quality_report import generate_data_quality_report
 from src.processing.pipeline_report import generate_pipeline_report
+from src.processing.run_context import create_run_directory
 
 FOOTBALL_DATA_COMPETITION_IDS = {
     "PD": 2014,
@@ -70,32 +71,92 @@ def positive_int(value):
 
 
 
+
 def run_script(script_path, *script_args):
-    logger.info("Running script: %s", script_path)
-    start_time = time.perf_counter()
+    """Run a Python module and stream its output through the logger."""
+
+    module_name = (
+        script_path
+        .replace("\\", "/")
+        .removesuffix(".py")
+        .replace("/", ".")
+    )
+
+    command = [
+        sys.executable,
+        "-u",
+        "-m",
+        module_name,
+        *[str(arg) for arg in script_args],
+    ]
+
+    logger.info(
+        "Starting child process | module=%s | args=%s",
+        module_name,
+        list(script_args),
+    )
+
+    started = time.perf_counter()
 
     try:
-        subprocess.run(
-        [sys.executable, "-m", script_path.replace("/", ".").removesuffix(".py"), *script_args],
-        cwd=ROOT,
-        check=True,
-    )
-    except subprocess.CalledProcessError:
-        duration = time.perf_counter() - start_time
-        logger.error(
-            "Script failed: %s | Duration: %.2fs",
-            script_path,
+        with subprocess.Popen(
+            command,
+            cwd=ROOT,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            bufsize=1,
+        ) as process:
+
+            assert process.stdout is not None
+
+            for line in process.stdout:
+                message = line.rstrip("\r\n")
+
+                if message:
+                    logger.info(
+                        "child[%s] | %s",
+                        module_name,
+                        message,
+                    )
+
+            return_code = process.wait()
+
+        duration = time.perf_counter() - started
+
+        if return_code != 0:
+            logger.error(
+                "Child process failed | module=%s | "
+                "exit_code=%s | duration=%.2fs",
+                module_name,
+                return_code,
+                duration,
+            )
+
+            raise subprocess.CalledProcessError(
+                return_code,
+                command,
+            )
+
+        logger.info(
+            "Child process completed | module=%s | "
+            "duration=%.2fs",
+            module_name,
             duration,
+        )
+
+    except subprocess.CalledProcessError:
+        raise
+
+    except Exception:
+        logger.exception(
+            "Unable to execute child process | module=%s",
+            module_name,
         )
         raise
 
-    duration = time.perf_counter() - start_time
-
-    logger.info(
-        "Script completed: %s | Duration: %.2fs",
-        script_path,
-        duration,
-    )
 
 
 
@@ -156,7 +217,12 @@ def create_gold_view():
         raise
 
 
-def run_data_quality_checks():
+def run_data_quality_checks(
+    *,
+    run_id=None,
+    run_dir=None,
+    source=None,
+):
     logger.info("Running data quality checks...")
     start_time = time.perf_counter()
 
@@ -206,7 +272,12 @@ def run_data_quality_checks():
                         failures,
                     )
 
-        report = generate_data_quality_report(checks)
+        report = generate_data_quality_report(
+            checks,
+            run_id=run_id,
+            run_dir=run_dir,
+            source=source,
+        )
 
         logger.info(
             "Data quality report saved | Status: %s | Failed checks: %s/%s",
@@ -245,21 +316,64 @@ def run_data_quality_checks():
         raise
 
 
-def run_for_season(fetch: bool, source: str = "api_football") -> None:
-    """Run all pipeline stages for the league and season specified in the environment variables."""
+def create_run_log_handler(run_dir):
+    """Write orchestrator logs to the current run directory."""
+
+    handler = logging.FileHandler(
+        run_dir / "pipeline.log",
+        encoding="utf-8",
+    )
+
+    handler.setLevel(logging.INFO)
+
+    handler.setFormatter(
+        logging.Formatter(
+            "%(asctime)s | %(levelname)s | "
+            "%(name)s | %(message)s"
+        )
+    )
+
+    return handler
+
+
+
+def run_for_season(
+    fetch: bool,
+    source: str = "api_football",
+) -> None:
+    """Run one source/league/season with isolated artifacts."""
+
     if source not in ("api_football", "football_data"):
         raise ValueError(f"Unsupported provider: {source}")
+
     if source == "football_data":
-        ingestion_script = "src/ingestion/fetch_football_data.py"
-        transformation_script = "src/processing/transform_football_data.py"
+        ingestion_script = (
+            "src/ingestion/fetch_football_data.py"
+        )
+        transformation_script = (
+            "src/processing/transform_football_data.py"
+        )
+        league_id = FOOTBALL_DATA_COMPETITION_IDS[
+            os.environ["COMPETITION_CODE"]
+        ]
     else:
-        ingestion_script = "src/ingestion/fetch_api_football.py"
-        transformation_script = "src/processing/transform_api_football.py"
+        ingestion_script = (
+            "src/ingestion/fetch_api_football.py"
+        )
+        transformation_script = (
+            "src/processing/transform_api_football.py"
+        )
+        league_id = int(os.environ["LEAGUE_ID"])
 
     loading_script = "src/warehouse/load_to_postgres.py"
+    season = int(os.environ["SEASON"])
+
+    # One new directory for each execution.
+    run_id, run_dir = create_run_directory()
 
     started_at = datetime.now(timezone.utc)
-    pipeline_start_at = time.perf_counter()
+    pipeline_start = time.perf_counter()
+
     stages = {
         "bucket": "NOT_RUN",
         "ingestion": "SKIPPED",
@@ -269,85 +383,294 @@ def run_for_season(fetch: bool, source: str = "api_football") -> None:
         "data_quality": "NOT_RUN",
     }
 
+    stage_durations = {}
     status = "SUCCESS"
+    error = None
 
-    logger.info(
-        "Starting pipeline for league_id=%s, season=%s",
-        os.environ["LEAGUE_ID"],
-        os.environ["SEASON"],
-    )
+    # Keep the existing console and global log handlers.
+    root_logger = logging.getLogger()
+    run_handler = create_run_log_handler(run_dir)
+    root_logger.addHandler(run_handler)
+
+    def timed_stage(name, action):
+        """Run a stage and record its duration, even on failure."""
+
+        stage_start = time.perf_counter()
+
+        try:
+            return run_pipeline_stage(
+                name,
+                action,
+                stages,
+            )
+        finally:
+            stage_durations[name] = round(
+                time.perf_counter() - stage_start,
+                3,
+            )
 
     try:
-        run_pipeline_stage(
+        logger.info(
+            "Pipeline started | run_id=%s | "
+            "source=%s | league=%s | season=%s",
+            run_id,
+            source,
+            league_id,
+            season,
+        )
+
+        timed_stage(
             "bucket",
-            lambda: run_script("src/storage/ensure_bucket.py"),
-            stages,
+            lambda: run_script(
+                "src/storage/ensure_bucket.py"
+            ),
         )
 
         if fetch:
-            run_pipeline_stage(
+            timed_stage(
                 "ingestion",
                 lambda: run_script(ingestion_script),
-                stages,
             )
 
-        run_pipeline_stage(
+        timed_stage(
             "transformation",
             lambda: run_script(transformation_script),
-            stages,
         )
 
-        run_pipeline_stage(
+        timed_stage(
             "loading",
             lambda: run_script(
                 loading_script,
                 "--source",
                 source,
             ),
-            stages,
         )
-        run_pipeline_stage("gold", create_gold_view, stages)
 
-        run_pipeline_stage("data_quality", run_data_quality_checks, stages)
+        timed_stage(
+            "gold",
+            create_gold_view,
+        )
 
-    except Exception:
+        timed_stage(
+            "data_quality",
+            lambda: run_data_quality_checks(
+                run_id=run_id,
+                run_dir=run_dir,
+                source=source,
+            ),
+        )
+
+    except Exception as exc:
         status = "FAILED"
+
+        failed_stage = next(
+            (
+                name
+                for name, stage_status in stages.items()
+                if stage_status == "FAILED"
+            ),
+            None,
+        )
+
+        # Store structured metadata, not raw exception text,
+        # which might contain credentials or connection details.
+        error = {
+            "type": type(exc).__name__,
+            "stage": failed_stage,
+        }
+
+        logger.exception(
+            "Pipeline failed | run_id=%s",
+            run_id,
+        )
+
         raise
 
     finally:
         finished_at = datetime.now(timezone.utc)
-        total_duration = time.perf_counter() - pipeline_start_at
+        total_duration = time.perf_counter() - pipeline_start
 
         try:
             report = generate_pipeline_report(
                 status=status,
                 started_at=started_at,
                 finished_at=finished_at,
-                league_id=(
-                    FOOTBALL_DATA_COMPETITION_IDS[
-                        os.environ["COMPETITION_CODE"]
-                    ]
-                    if source == "football_data"
-                    else int(os.environ["LEAGUE_ID"])
-                ),
-                season=int(os.environ["SEASON"]),
+                league_id=league_id,
+                season=season,
                 stages=stages,
+                source=source,
+                run_id=run_id,
+                run_dir=run_dir,
+                stage_durations=stage_durations,
+                error=error,
             )
 
             logger.info(
-                "Pipeline finished | Status: %s | Duration: %.2fs",
+                "Pipeline finished | run_id=%s | "
+                "status=%s | duration=%.2fs",
+                run_id,
                 report["status"],
                 total_duration,
             )
+
+            logger.info(
+                "Execution artifacts: %s",
+                run_dir,
+            )
+
         
         except Exception:
-            logger.exception("Failed to generate pipeline report")
+            logger.exception(
+                "Failed to generate pipeline report | "
+                "run_id=%s",
+                run_id,
+            )
 
+            # A successful ETL run must not hide a reporting failure.
+            # If an earlier pipeline stage already failed, preserve
+            # that original exception instead.
+            if status == "SUCCESS":
+                raise
+
+
+        finally:
+            # Prevent logs from later runs entering this file.
+            root_logger.removeHandler(run_handler)
+            run_handler.close()
+
+
+def run_partial_pipeline(
+    mode: str,
+    source: str,
+) -> None:
+    """Run one requested stage with its own log and JSON report."""
+
+    scripts = {
+        "ingestion": {
+            "api_football": "src/ingestion/fetch_api_football.py",
+            "football_data": "src/ingestion/fetch_football_data.py",
+        },
+        "transformation": {
+            "api_football": "src/processing/transform_api_football.py",
+            "football_data": "src/processing/transform_football_data.py",
+        },
+        "loading": {
+            "api_football": "src/warehouse/load_to_postgres.py",
+            "football_data": "src/warehouse/load_to_postgres.py",
+        },
+    }
+
+    if mode not in scripts:
+        raise ValueError(f"Unsupported partial mode: {mode}")
+
+    if source not in scripts[mode]:
+        raise ValueError(f"Unsupported source: {source}")
+
+    league_id = (
+        FOOTBALL_DATA_COMPETITION_IDS[os.environ["COMPETITION_CODE"]]
+        if source == "football_data"
+        else int(os.environ["LEAGUE_ID"])
+    )
+    season = int(os.environ["SEASON"])
+
+    run_id, run_dir = create_run_directory()
+
+    started_at = datetime.now(timezone.utc)
+    start = time.perf_counter()
+
+    stages = {
+        "bucket": "NOT_RUN",
+        "ingestion": "NOT_RUN",
+        "transformation": "NOT_RUN",
+        "loading": "NOT_RUN",
+        "gold": "NOT_RUN",
+        "data_quality": "NOT_RUN",
+    }
+    stage_durations = {}
+    status = "SUCCESS"
+    error = None
+
+    handler = create_run_log_handler(run_dir)
+    root_logger = logging.getLogger()
+    root_logger.addHandler(handler)
+
+    try:
         logger.info(
-            "Pipeline %s | Total Duration: %.2fs",
-            status,
-            total_duration,
+            "Partial pipeline started | run_id=%s | "
+            "mode=%s | source=%s | league=%s | season=%s",
+            run_id, mode, source, league_id, season,
         )
+
+        stage_start = time.perf_counter()
+
+        try:
+            script = scripts[mode][source]
+
+            def execute():
+                if mode == "loading":
+                    return run_script(script, "--source", source)
+                return run_script(script)
+
+            run_pipeline_stage(mode, execute, stages)
+
+        finally:
+            stage_durations[mode] = round(
+                time.perf_counter() - stage_start, 3
+            )
+
+    except Exception as exc:
+        status = "FAILED"
+        error = {
+            "stage": mode,
+            "type": type(exc).__name__,
+        }
+
+        logger.exception(
+            "Partial pipeline failed | run_id=%s",
+            run_id,
+        )
+        raise
+
+    finally:
+        finished_at = datetime.now(timezone.utc)
+
+        try:
+            report = generate_pipeline_report(
+                status=status,
+                started_at=started_at,
+                finished_at=finished_at,
+                league_id=league_id,
+                season=season,
+                stages=stages,
+                source=source,
+                run_id=run_id,
+                run_dir=run_dir,
+                stage_durations=stage_durations,
+                error=error,
+            )
+
+            logger.info(
+                "Partial pipeline finished | run_id=%s | "
+                "status=%s | duration=%.2fs",
+                run_id,
+                report["status"],
+                time.perf_counter() - start,
+            )
+
+            logger.info("Artifacts saved: %s", run_dir)
+
+        except Exception:
+            logger.exception(
+                "Failed to save partial pipeline report | "
+                "run_id=%s",
+                run_id,
+            )
+            if status == "SUCCESS":
+                raise
+
+        finally:
+            root_logger.removeHandler(handler)
+            handler.close()
 
 
 def main():
@@ -413,7 +736,7 @@ def main():
         parser.error(
             "--transform-only cannot be combined with --fetch."
         )
-        
+
     if args.source == "football_data":
         if args.league_id is not None:
             parser.error(
@@ -471,35 +794,34 @@ def main():
     if args.ingest_only and not args.fetch:
         parser.error("--ingest-only requires --fetch.")
 
+
     for season in seasons:
         os.environ["SEASON"] = str(season)
+
         if args.load_only:
-            run_script(
-                "src/warehouse/load_to_postgres.py",
-                "--source",
-                args.source,
+            run_partial_pipeline(
+                mode="loading",
+                source=args.source,
             )
-            continue
-        if args.transform_only:
-            script = (
-                "src/processing/transform_football_data.py"
-                if args.source == "football_data"
-                else "src/processing/transform_api_football.py"
+
+        elif args.transform_only:
+            run_partial_pipeline(
+                mode="transformation",
+                source=args.source,
             )
-            run_script(script)
-            continue
 
-        if args.ingest_only:
-            if args.source == "football_data":
-                script = "src/ingestion/fetch_football_data.py"
-            else:
-                script = "src/ingestion/fetch_api_football.py"
+        elif args.ingest_only:
+            run_partial_pipeline(
+                mode="ingestion",
+                source=args.source,
+            )
 
-            run_script(script)
-            continue
+        else:
+            run_for_season(
+                args.fetch,
+                source=args.source,
+            )
 
-        run_for_season(args.fetch, source=args.source)
-        
 
 if __name__ == "__main__":
     try:

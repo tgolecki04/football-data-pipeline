@@ -29,7 +29,6 @@ dist/
 .idea/
 
 # Local data and generated files
-/backups/
 data/
 *.parquet
 *.csv
@@ -38,7 +37,6 @@ data/
 *.jsonl
 
 # Logs
-logs/
 *.log
 
 # OS files
@@ -46,3 +44,7 @@ logs/
 Thumbs.db
 Desktop.ini
 project_structure.txt
+
+/artifacts/
+/logs/
+/backups/

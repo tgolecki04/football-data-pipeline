@@ -85,7 +85,30 @@ The pipeline follows the medallion architecture. Data moves through three layers
 4. **Gold.** Two views are calculated from finished matches. `gold_team_stats` holds the standings: played, wins, draws, losses, goals for and against, goal difference and points. `gold_team_recent_form` holds the same numbers for each team's last five matches. Both are grouped by league and season.
 5. **Data quality.** After the Gold view is created, the checks from `sql/data_quality_checks.sql` run against the warehouse. If any check finds problems, the pipeline stops with an error.
 
-`run_pipeline.py` runs all steps in order for each requested season and writes logs to the console and to `logs/pipeline.log`. Each run also saves a report in `reports/`: `pipeline_report_league_<id>_season_<year>.json` for the season that was run, and `data_quality_report.json` for the whole warehouse. A report is overwritten only when the same league and season is run again.
+`run_pipeline.py` runs all steps in order for each requested season and writes logs to the console and to `logs/pipeline.log`.
+
+### Execution logs and reports
+
+Every pipeline execution generates a unique run ID and stores its artifacts in `artifacts/runs/<run_id>/`.
+
+Each run contains:
+
+- `pipeline.json` — execution status, source, league, season, stage results, execution times, and error metadata.
+- `pipeline.log` — orchestrator logs and output captured from child processes.
+- `data_quality.json` — SQL data quality results, generated only when the data quality stage is executed.
+
+Full and partial executions (`--ingest-only`, `--transform-only`, `--load-only`) use the same reporting structure. Partial runs do not execute additional stages.
+
+To inspect recent executions:
+
+```bash
+python -m src.processing.run_history --last 10
+python -m src.processing.run_history --status FAILED
+```
+
+Historical reports are preserved locally under `artifacts/legacy/`. GitHub Actions generates synthetic validation reports separately under `artifacts/ci/` and publishes them as downloadable workflow artifacts.
+
+The `artifacts/` directory is excluded from Git to avoid committing local logs and execution data.
 
 ## Data Quality and Reliability
 
