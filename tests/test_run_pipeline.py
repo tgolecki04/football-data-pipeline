@@ -18,7 +18,7 @@ def no_report_files(monkeypatch):
         "generate_pipeline_report",
         lambda **kwargs: {"status": "SUCCESS"},
     )
-    
+
 @pytest.mark.parametrize(
     ("value", "expected"),
     [
@@ -60,14 +60,14 @@ def test_run_script_executes_subprocess(monkeypatch, caplog):
     monkeypatch.setattr(subprocess, "run", mock_run)
 
     with caplog.at_level("INFO"):
-        run_script("src/processing/transform_fixtures.py")
+        run_script("src/processing/transform_api_football.py")
 
     assert len(calls) == 1
 
     assert calls[0]["command"] == [
         sys.executable,
         "-m",
-        "src.processing.transform_fixtures",
+        "src.processing.transform_api_football",
     ]
 
     assert calls[0]["cwd"] == run_pipeline.ROOT
@@ -86,7 +86,7 @@ def test_run_script_logs_failure_and_reraises(
     monkeypatch.setattr(subprocess, "run", mock_run)
 
     with caplog.at_level("ERROR"), pytest.raises(subprocess.CalledProcessError):
-        run_script("src/processing/transform_fixtures.py")
+        run_script("src/processing/transform_api_football.py")
 
     assert "Script failed" in caplog.text
 
@@ -124,7 +124,11 @@ def test_main_stops_when_a_script_fails(monkeypatch):
 def test_main_ensures_bucket_before_others_steps(monkeypatch):
     calls = []
 
-    monkeypatch.setattr(run_pipeline, "run_script", calls.append)
+    monkeypatch.setattr(
+        run_pipeline,
+        "run_script",
+        lambda script_path, *args: calls.append(script_path),
+    )
     monkeypatch.setattr(run_pipeline, "create_gold_view", lambda: None)
     monkeypatch.setattr(run_pipeline, "run_data_quality_checks", lambda: None)
 
@@ -330,7 +334,7 @@ def test_run_data_quality_checks_fails_on_invalid_data(
 )
 def test_football_data_competition_ids(competition, expected_id):
     assert FOOTBALL_DATA_COMPETITION_IDS[competition] == expected_id
-    
+
 
 def test_rejects_unsupported_competition():
     result = subprocess.run(
@@ -350,3 +354,55 @@ def test_rejects_unsupported_competition():
 
     assert result.returncode != 0
     assert "Unsupported competition: XYZ" in result.stderr
+
+
+@pytest.mark.parametrize(
+    "source,extra_args",
+    [
+        (
+            "api_football",
+            ["--league-id", "39"],
+        ),
+        (
+            "football_data",
+            ["--competition", "PL"],
+        ),
+    ],
+)
+def test_load_only_uses_shared_loader_for_both_sources(
+    monkeypatch, source, extra_args
+):
+    """Both providers must use the same PostgreSQL loader."""
+
+    calls = []
+
+    monkeypatch.setenv("SEASON", "2023")
+
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run_pipeline.py",
+            "--load-only",
+            "--source",
+            source,
+            "--season",
+            "2023",
+            *extra_args,
+        ],
+    )
+
+    monkeypatch.setattr(
+        run_pipeline,
+        "run_script",
+        lambda path, *args: calls.append((path, args)),
+    )
+
+    run_pipeline.main()
+
+    assert calls == [
+        (
+            "src/warehouse/load_to_postgres.py",
+            ("--source", source),
+        )
+    ]

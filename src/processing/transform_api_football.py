@@ -1,160 +1,201 @@
-""" Transform the latest Bronze fixtures into Silver Parquet file. """
+
+"""Transform API-Football Bronze JSON into Silver Parquet."""
 
 import io
 import json
 import logging
-import sys
 import os
 
 import boto3
 import pandas as pd
-from data_quality import validate_fixtures
 from dotenv import load_dotenv
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-    stream=sys.stdout,
-)
+from src.processing.data_quality import validate_fixtures
+from src.processing.silver_schema import validate_silver_schema
+
 logger = logging.getLogger(__name__)
 
-load_dotenv()
+SOURCE = "api_football"
 
-BUCKET = os.environ["S3_BUCKET"]
 
-LEAGUE_ID = int(os.environ["LEAGUE_ID"])
-SEASON = int(os.environ["SEASON"])
-
-BRONZE_PREFIX = (
-    f"bronze/api_football/league_{LEAGUE_ID}/"
-    f"season_{SEASON}/"
-)
-
-SILVER_KEY = (
-    f"silver/api_football/league_{LEAGUE_ID}/"
-    f"season_{SEASON}/"
-    "fixtures.parquet"
-)
-
-# RustFS is S3-compatible, so boto3 works with a custom endpoint
-s3 = boto3.client(
-    "s3",
-    endpoint_url=os.environ["S3_ENDPOINT"],
-    aws_access_key_id=os.environ["RUSTFS_ACCESS_KEY"],
-    aws_secret_access_key=os.environ["RUSTFS_SECRET_KEY"],
-    region_name="us-east-1",
-)
-
-# Find the Bronze files
-objects = []
-
-paginator = s3.get_paginator("list_objects_v2")
-
-for page in paginator.paginate(
-    Bucket=BUCKET,
-    Prefix=BRONZE_PREFIX,
-):
-    objects.extend(
-        obj for obj in page.get("Contents", [])
-        if obj["Key"].endswith(".json")
+def create_s3_client():
+    """Create an S3-compatible RustFS client."""
+    return boto3.client(
+        "s3",
+        endpoint_url=os.environ["S3_ENDPOINT"],
+        aws_access_key_id=os.environ["RUSTFS_ACCESS_KEY"],
+        aws_secret_access_key=os.environ["RUSTFS_SECRET_KEY"],
+        region_name="us-east-1",
     )
 
-if not objects:
-    raise RuntimeError("No Bronze files found for the specified league and season.")
 
-latest = max(objects, key=lambda obj: obj["LastModified"])
-bronze_key = latest["Key"]
+def read_bronze(league_id: int, season: int) -> dict:
+    """Read the latest API-Football Bronze JSON."""
 
-logger.info("Reading Bronze file: %s", bronze_key)
+    s3 = create_s3_client()
 
-response = s3.get_object(
-    Bucket=BUCKET,
-    Key=bronze_key,
-)
+    prefix = (
+        f"bronze/{SOURCE}/league_{league_id}/"
+        f"season_{season}/"
+    )
 
-data = json.loads(
-    response["Body"].read().decode("utf-8")
-)
+    objects = []
 
-matches = data["response"]
+    paginator = s3.get_paginator("list_objects_v2")
 
-# Flatten the nested structure into a list of dictionaries
-rows = []
+    for page in paginator.paginate(
+        Bucket=os.environ["S3_BUCKET"],
+        Prefix=prefix,
+    ):
+        objects.extend(
+            obj
+            for obj in page.get("Contents", [])
+            if obj["Key"].endswith(".json")
+        )
 
-for match in matches:
-    fixture = match["fixture"]
-    league = match["league"]
-    teams = match["teams"]
-    goals = match["goals"]
+    if not objects:
+        raise RuntimeError(
+            f"No Bronze files found for league={league_id}, "
+            f"season={season}."
+        )
 
-    rows.append({
-        "source": "api_football",
-        "fixture_id": fixture["id"],
-        "date": fixture["date"],
-        "league_id": league["id"],
-        "season": league["season"],
-        "round": league.get("round"),
-        "home_team_id": teams["home"]["id"],
-        "home_team": teams["home"]["name"],
-        "away_team_id": teams["away"]["id"],
-        "away_team": teams["away"]["name"],
-        "home_goals": goals["home"],
-        "away_goals": goals["away"],
-        "status": fixture["status"]["short"],
-    })
+    latest = max(
+        objects,
+        key=lambda obj: obj["LastModified"],
+    )
 
-df = pd.DataFrame(rows)
+    logger.info("Reading Bronze: %s", latest["Key"])
 
-if df.empty:
-    raise RuntimeError("Brak meczów do przetworzenia.")
+    response = s3.get_object(
+        Bucket=os.environ["S3_BUCKET"],
+        Key=latest["Key"],
+    )
 
-df["date"] = pd.to_datetime(
-    df["date"],
-    utc=True,
-)
+    return json.loads(response["Body"].read().decode("utf-8"))
 
-df = df.drop_duplicates(
-    subset=["fixture_id"]
-)
 
-df = df.sort_values("date")
+def transform_matches(data: dict) -> pd.DataFrame:
+    """Convert API-Football response into the common Silver schema."""
 
-validate_fixtures(df)
-logger.info("Validation passed")
+    rows = []
 
-# Write Parquet to a memory, so no temporary file is needed
-buffer = io.BytesIO()
+    for match in data["response"]:
+        fixture = match["fixture"]
+        league = match["league"]
+        teams = match["teams"]
+        goals = match["goals"]
 
-df.to_parquet(
-    buffer,
-    engine="pyarrow",
-    index=False,
-)
+        rows.append({
+            "source": SOURCE,
+            "fixture_id": fixture["id"],
+            "date": fixture["date"],
+            "league_id": league["id"],
+            "season": league["season"],
+            "round": league.get("round"),
+            "home_team_id": teams["home"]["id"],
+            "home_team": teams["home"]["name"],
+            "away_team_id": teams["away"]["id"],
+            "away_team": teams["away"]["name"],
+            "home_goals": goals["home"],
+            "away_goals": goals["away"],
+            "status": fixture["status"]["short"],
+        })
 
-s3.put_object(
-    Bucket=BUCKET,
-    Key=SILVER_KEY,
-    Body=buffer.getvalue(),
-    ContentType="application/octet-stream",
-)
+    df = pd.DataFrame(rows)
 
-logger.info(
-    "Transformation finished: %d fixtures, %d columns, saved to Silver: %s",
-    len(df),
-    len(df.columns),
-    SILVER_KEY
-)
+    if df.empty:
+        raise ValueError("No API-Football matches to transform.")
 
-logger.info(
-    "Sample data from Silver file:\n%s",
-    df[[
-        "date",
-        "home_team",
-        "away_team",
-        "home_goals",
-        "away_goals",
-        "status"
-        ]
-    ].head(10).to_string(),
-)
+    df["date"] = pd.to_datetime(df["date"], utc=True)
+
+    original_count = len(df)
+
+    df = df.drop_duplicates(
+        subset=["source", "fixture_id"]
+    )
+
+    removed_count = original_count - len(df)
+
+    if removed_count:
+        logger.warning(
+            "Removed %d duplicate fixtures",
+            removed_count,
+        )
+
+    return df.sort_values("date").reset_index(drop=True)
+
+
+def save_to_silver(
+    df: pd.DataFrame,
+    league_id: int,
+    season: int,
+) -> str:
+    """Save validated fixtures to Silver Parquet."""
+
+    s3 = create_s3_client()
+
+    key = (
+        f"silver/{SOURCE}/league_{league_id}/"
+        f"season_{season}/fixtures.parquet"
+    )
+
+    buffer = io.BytesIO()
+
+    df.to_parquet(
+        buffer,
+        engine="pyarrow",
+        index=False,
+    )
+
+    s3.put_object(
+        Bucket=os.environ["S3_BUCKET"],
+        Key=key,
+        Body=buffer.getvalue(),
+        ContentType="application/octet-stream",
+    )
+
+    logger.info(
+        "Saved %d fixtures to Silver: %s",
+        len(df),
+        key,
+    )
+
+    return key
+
+
+def main() -> None:
+    """Run the API-Football Bronze-to-Silver stage."""
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s | %(levelname)s | %(message)s",
+    )
+
+    load_dotenv()
+
+    league_id = int(os.environ["LEAGUE_ID"])
+    season = int(os.environ["SEASON"])
+
+    data = read_bronze(league_id, season)
+    df = transform_matches(data)
+
+    if not df["league_id"].eq(league_id).all():
+        raise ValueError(
+            "Bronze league does not match requested league."
+        )
+
+    if not df["season"].eq(season).all():
+        raise ValueError(
+            "Bronze season does not match requested season."
+        )
+
+    validate_silver_schema(df, SOURCE)
+    validate_fixtures(df)
+
+    logger.info("Silver validation passed: %d fixtures", len(df))
+
+    save_to_silver(df, league_id, season)
+
+
+if __name__ == "__main__":
+    main()

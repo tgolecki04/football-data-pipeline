@@ -70,13 +70,13 @@ def positive_int(value):
 
 
 
-def run_script(script_path):
+def run_script(script_path, *script_args):
     logger.info("Running script: %s", script_path)
     start_time = time.perf_counter()
 
     try:
         subprocess.run(
-        [sys.executable, "-m", script_path.replace("/", ".").removesuffix(".py")],
+        [sys.executable, "-m", script_path.replace("/", ".").removesuffix(".py"), *script_args],
         cwd=ROOT,
         check=True,
     )
@@ -252,11 +252,11 @@ def run_for_season(fetch: bool, source: str = "api_football") -> None:
     if source == "football_data":
         ingestion_script = "src/ingestion/fetch_football_data.py"
         transformation_script = "src/processing/transform_football_data.py"
-        loading_script = "src/warehouse/load_football_data.py"
     else:
         ingestion_script = "src/ingestion/fetch_api_football.py"
-        transformation_script = "src/processing/transform_fixtures.py"
-        loading_script = "src/warehouse/load_fixtures.py"
+        transformation_script = "src/processing/transform_api_football.py"
+
+    loading_script = "src/warehouse/load_to_postgres.py"
 
     started_at = datetime.now(timezone.utc)
     pipeline_start_at = time.perf_counter()
@@ -299,7 +299,11 @@ def run_for_season(fetch: bool, source: str = "api_football") -> None:
 
         run_pipeline_stage(
             "loading",
-            lambda: run_script(loading_script),
+            lambda: run_script(
+                loading_script,
+                "--source",
+                source,
+            ),
             stages,
         )
         run_pipeline_stage("gold", create_gold_view, stages)
@@ -470,18 +474,17 @@ def main():
     for season in seasons:
         os.environ["SEASON"] = str(season)
         if args.load_only:
-            if args.source == "football_data":
-                script = "src/warehouse/load_football_data.py"
-            else:
-                script = "src/warehouse/load_fixtures.py"
-
-            run_script(script)
+            run_script(
+                "src/warehouse/load_to_postgres.py",
+                "--source",
+                args.source,
+            )
             continue
         if args.transform_only:
             script = (
                 "src/processing/transform_football_data.py"
                 if args.source == "football_data"
-                else "src/processing/transform_fixtures.py"
+                else "src/processing/transform_api_football.py"
             )
             run_script(script)
             continue

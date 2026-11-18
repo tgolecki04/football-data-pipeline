@@ -29,6 +29,7 @@ dist/
 .idea/
 
 # Local data and generated files
+/backups/
 data/
 *.parquet
 *.csv
@@ -44,5 +45,4 @@ logs/
 .DS_Store
 Thumbs.db
 Desktop.ini
-
 project_structure.txt

@@ -1,6 +1,8 @@
 # Real-Time Football Data Pipeline :soccer::oil_drum::hammer_and_wrench:
 [![Tests](https://github.com/tgolecki04/football-data-pipeline/actions/workflows/tests.yml/badge.svg)](https://github.com/tgolecki04/football-data-pipeline/actions/workflows/tests.yml)
 
+[![Pipeline](https://github.com/tgolecki04/football-data-pipeline/actions/workflows/pipeline.yml/badge.svg?branch=main)](https://github.com/tgolecki04/football-data-pipeline/actions/workflows/pipeline.yml)
+
 An end-to-end data engineering and machine learning project focused on building a data platform for football analytics and in-play match predictions. The system integrates historical match data with live updates, processes the data through a structured pipeline, and uses machine learning models to estimate match outcome probabilities as the game progresses.
 
 ### Pipeline Overview
@@ -38,8 +40,8 @@ flowchart LR
         Silver["Silver<br/>Parquet"]
     end
 
-    Bronze -->|"transform_fixtures.py"| Silver
-    Silver -->|"load_fixtures.py"| Fixtures
+    Bronze -->|"transform_api_football.py"| Silver
+    Silver -->|"load_to_postgres.py"| Fixtures
 
     subgraph PG["PostgreSQL (data warehouse)"]
         Fixtures["fixtures<br/>table"]
@@ -73,8 +75,8 @@ The pipeline follows the medallion architecture. Data moves through three layers
 | Layer | Location | Format | Script |
 | --- | --- | --- | --- |
 | Bronze | RustFS, `bronze/api_football/...` | Raw JSON | `src/ingestion/fetch_api_football.py` |
-| Silver | RustFS, `silver/api_football/...` | Parquet | `src/processing/transform_fixtures.py` |
-| Warehouse | PostgreSQL table `fixtures` | Table | `src/warehouse/load_fixtures.py` |
+| Silver | RustFS, `silver/api_football/...` | Parquet | `src/processing/transform_api_football.py` |
+| Warehouse | PostgreSQL table `fixtures` | Table | `src/warehouse/load_to_postgres.py` |
 | Gold | PostgreSQL views `gold_team_stats`, `gold_team_recent_form` | Views | `sql/gold_team_stats.sql`, `sql/gold_team_recent_form.sql` |
 
 1. **Ingestion.** Fixtures for the league and season set in `.env` (or passed with `--season`) are downloaded from API-Football. The full API response is stored unchanged as a timestamped JSON file, so the raw data can always be reprocessed.
@@ -141,12 +143,13 @@ football-data-pipeline/
 │   │   ├── data_quality.py          # Validation of fixtures before Silver
 │   │   ├── data_quality_report.py   # Writes the data quality report
 │   │   ├── pipeline_report.py       # Writes the pipeline run report
-│   │   └── transform_fixtures.py    # Bronze to Silver (Parquet)
+│   │   └── transform_api_football.py    # Bronze to Silver (Parquet)
 │   ├── storage/
 │   │   ├── ensure_bucket.py         # Creates the bucket if missing
 │   │   └── test_s3_connection.py    # Checks the connection to RustFS
 │   └── warehouse/
-│       └── load_fixtures.py         # Silver to PostgreSQL
+│       ├── load_to_postgres.py        # Silver to PostgreSQL
+│       └── load_guard.py
 ├── tests/
 │   ├── test_data_quality.py         # Tests for fixture validation
 │   ├── test_data_quality_report.py  # Tests for the data quality report
