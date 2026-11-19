@@ -444,9 +444,10 @@ def test_load_only_uses_shared_loader_for_both_sources(
     monkeypatch.setattr(
         run_pipeline,
         "run_partial_pipeline",
-        lambda mode, source: calls.append((mode, source)),
+        lambda mode, source, session=None: calls.append(
+            (mode, source)
+        ),
     )
-
     run_pipeline.main()
 
     assert calls == [

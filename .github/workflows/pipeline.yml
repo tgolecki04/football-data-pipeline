@@ -1,11 +1,19 @@
 
+
 name: Pipeline
 
 on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
   workflow_dispatch:
 
 permissions:
   contents: read
+
 
 jobs:
   pipeline:
@@ -772,7 +780,7 @@ jobs:
               f"{os.environ['GITHUB_RUN_ATTEMPT']}"
           )
 
-          run_dir = Path("artifacts/ci") / run_id
+          run_dir = Path("artifacts/runs") / run_id
           run_dir.mkdir(parents=True, exist_ok=True)
 
           report = generate_data_quality_report(
@@ -797,7 +805,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: football-data-quality-report
-          path: artifacts/ci/**/data_quality.json
+          path: artifacts/runs/**/data_quality.json
           if-no-files-found: warn
           retention-days: 30
 
@@ -886,7 +894,7 @@ jobs:
               f"ci_{os.environ['GITHUB_RUN_ID']}_"
               f"{os.environ['GITHUB_RUN_ATTEMPT']}"
           )
-          run_dir = Path("artifacts/ci") / run_id
+          run_dir = Path("artifacts/runs") / run_id
 
           dq_report = json.loads(
               (run_dir / "data_quality.json").read_text(
@@ -960,6 +968,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: football-pipeline-execution-report
-          path: artifacts/ci/**/pipeline.json
+          path: artifacts/runs/**/pipeline.json
           if-no-files-found: warn
           retention-days: 30
