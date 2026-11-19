@@ -4,6 +4,7 @@ import os
 import subprocess
 import sys
 import time
+import json
 from datetime import datetime, timezone
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
@@ -15,6 +16,7 @@ from dotenv import load_dotenv
 from src.processing.data_quality_report import generate_data_quality_report
 from src.processing.pipeline_report import generate_pipeline_report
 from src.processing.run_context import create_run_directory
+from src.processing.execution_session import ExecutionSession
 
 FOOTBALL_DATA_COMPETITION_IDS = {
     "PD": 2014,
@@ -222,6 +224,7 @@ def run_data_quality_checks(
     run_id=None,
     run_dir=None,
     source=None,
+    on_report=None,
 ):
     logger.info("Running data quality checks...")
     start_time = time.perf_counter()
@@ -278,6 +281,11 @@ def run_data_quality_checks(
             run_dir=run_dir,
             source=source,
         )
+
+        # Preserve results even when a Data Quality check fails.
+        if on_report is not None:
+            on_report(report)
+
 
         logger.info(
             "Data quality report saved | Status: %s | Failed checks: %s/%s",
@@ -337,19 +345,19 @@ def create_run_log_handler(run_dir):
 
 
 
+
 def run_for_season(
     fetch: bool,
     source: str = "api_football",
+    session: ExecutionSession | None = None,
 ) -> None:
-    """Run one source/league/season with isolated artifacts."""
+    """Run one season, optionally as part of a shared execution."""
 
     if source not in ("api_football", "football_data"):
         raise ValueError(f"Unsupported provider: {source}")
 
     if source == "football_data":
-        ingestion_script = (
-            "src/ingestion/fetch_football_data.py"
-        )
+        ingestion_script = "src/ingestion/fetch_football_data.py"
         transformation_script = (
             "src/processing/transform_football_data.py"
         )
@@ -357,9 +365,7 @@ def run_for_season(
             os.environ["COMPETITION_CODE"]
         ]
     else:
-        ingestion_script = (
-            "src/ingestion/fetch_api_football.py"
-        )
+        ingestion_script = "src/ingestion/fetch_api_football.py"
         transformation_script = (
             "src/processing/transform_api_football.py"
         )
@@ -368,8 +374,14 @@ def run_for_season(
     loading_script = "src/warehouse/load_to_postgres.py"
     season = int(os.environ["SEASON"])
 
-    # One new directory for each execution.
-    run_id, run_dir = create_run_directory()
+    # Direct calls create their own artifacts.
+    # CLI calls reuse the one session created in main().
+    standalone = session is None
+
+    if standalone:
+        run_id, run_dir = create_run_directory()
+    else:
+        run_id, run_dir = session.run_id, session.run_dir
 
     started_at = datetime.now(timezone.utc)
     pipeline_start = time.perf_counter()
@@ -387,13 +399,15 @@ def run_for_season(
     status = "SUCCESS"
     error = None
 
-    # Keep the existing console and global log handlers.
     root_logger = logging.getLogger()
-    run_handler = create_run_log_handler(run_dir)
-    root_logger.addHandler(run_handler)
+    run_handler = None
+
+    if standalone:
+        run_handler = create_run_log_handler(run_dir)
+        root_logger.addHandler(run_handler)
 
     def timed_stage(name, action):
-        """Run a stage and record its duration, even on failure."""
+        """Run a stage and record its duration, including failures."""
 
         stage_start = time.perf_counter()
 
@@ -408,6 +422,21 @@ def run_for_season(
                 time.perf_counter() - stage_start,
                 3,
             )
+
+    def collect_quality_report(report):
+        """Preserve Data Quality results before an error is raised."""
+
+        if session is None:
+            return
+
+        session.quality_results.append({
+            "league_id": league_id,
+            "season": season,
+            "overall_status": report["overall_status"],
+            "total_checks": report["total_checks"],
+            "failed_checks": report["failed_checks"],
+            "checks": report["checks"],
+        })
 
     try:
         logger.info(
@@ -457,6 +486,7 @@ def run_for_season(
                 run_id=run_id,
                 run_dir=run_dir,
                 source=source,
+                on_report=collect_quality_report,
             ),
         )
 
@@ -472,16 +502,18 @@ def run_for_season(
             None,
         )
 
-        # Store structured metadata, not raw exception text,
-        # which might contain credentials or connection details.
+        # Avoid putting exception messages or credentials in JSON.
         error = {
             "type": type(exc).__name__,
             "stage": failed_stage,
         }
 
         logger.exception(
-            "Pipeline failed | run_id=%s",
+            "Pipeline failed | run_id=%s | "
+            "season=%s | stage=%s",
             run_id,
+            season,
+            failed_stage,
         )
 
         raise
@@ -490,58 +522,72 @@ def run_for_season(
         finished_at = datetime.now(timezone.utc)
         total_duration = time.perf_counter() - pipeline_start
 
-        try:
-            report = generate_pipeline_report(
-                status=status,
-                started_at=started_at,
-                finished_at=finished_at,
-                league_id=league_id,
-                season=season,
-                stages=stages,
-                source=source,
-                run_id=run_id,
-                run_dir=run_dir,
-                stage_durations=stage_durations,
-                error=error,
-            )
+        # Record this season in the shared execution session.
+        if session is not None:
+            session.seasons.append({
+                "league_id": league_id,
+                "season": season,
+                "status": status,
+                "started_at": started_at.isoformat(),
+                "finished_at": finished_at.isoformat(),
+                "duration_seconds": round(total_duration, 3),
+                "stages": dict(stages),
+                "stage_durations_seconds": dict(stage_durations),
+                "error": error,
+            })
 
-            logger.info(
-                "Pipeline finished | run_id=%s | "
-                "status=%s | duration=%.2fs",
-                run_id,
-                report["status"],
-                total_duration,
-            )
+        # Preserve existing standalone behavior for direct callers.
+        if standalone:
+            try:
+                report = generate_pipeline_report(
+                    status=status,
+                    started_at=started_at,
+                    finished_at=finished_at,
+                    league_id=league_id,
+                    season=season,
+                    stages=stages,
+                    source=source,
+                    run_id=run_id,
+                    run_dir=run_dir,
+                    stage_durations=stage_durations,
+                    error=error,
+                )
 
-            logger.info(
-                "Execution artifacts: %s",
-                run_dir,
-            )
+                logger.info(
+                    "Pipeline finished | run_id=%s | "
+                    "status=%s | duration=%.2fs",
+                    run_id,
+                    report["status"],
+                    total_duration,
+                )
 
-        
-        except Exception:
-            logger.exception(
-                "Failed to generate pipeline report | "
-                "run_id=%s",
-                run_id,
-            )
+                logger.info(
+                    "Execution artifacts: %s",
+                    run_dir,
+                )
 
-            # A successful ETL run must not hide a reporting failure.
-            # If an earlier pipeline stage already failed, preserve
-            # that original exception instead.
-            if status == "SUCCESS":
-                raise
+            except Exception:
+                logger.exception(
+                    "Failed to generate pipeline report | "
+                    "run_id=%s",
+                    run_id,
+                )
 
+                # Do not hide reporting errors after a successful ETL.
+                # Preserve the original exception if ETL already failed.
+                if status == "SUCCESS":
+                    raise
 
-        finally:
-            # Prevent logs from later runs entering this file.
-            root_logger.removeHandler(run_handler)
-            run_handler.close()
+            finally:
+                root_logger.removeHandler(run_handler)
+                run_handler.close()
+
 
 
 def run_partial_pipeline(
     mode: str,
     source: str,
+    session: ExecutionSession | None = None,
 ) -> None:
     """Run one requested stage with its own log and JSON report."""
 
@@ -573,7 +619,12 @@ def run_partial_pipeline(
     )
     season = int(os.environ["SEASON"])
 
-    run_id, run_dir = create_run_directory()
+    standalone = session is None
+
+    if standalone:
+        run_id, run_dir = create_run_directory()
+    else:
+        run_id, run_dir = session.run_id, session.run_dir
 
     started_at = datetime.now(timezone.utc)
     start = time.perf_counter()
@@ -590,9 +641,12 @@ def run_partial_pipeline(
     status = "SUCCESS"
     error = None
 
-    handler = create_run_log_handler(run_dir)
+    handler = None
     root_logger = logging.getLogger()
-    root_logger.addHandler(handler)
+
+    if standalone:
+        handler = create_run_log_handler(run_dir)
+        root_logger.addHandler(handler)
 
     try:
         logger.info(
@@ -634,43 +688,55 @@ def run_partial_pipeline(
     finally:
         finished_at = datetime.now(timezone.utc)
 
-        try:
-            report = generate_pipeline_report(
-                status=status,
-                started_at=started_at,
-                finished_at=finished_at,
-                league_id=league_id,
-                season=season,
-                stages=stages,
-                source=source,
-                run_id=run_id,
-                run_dir=run_dir,
-                stage_durations=stage_durations,
-                error=error,
-            )
+        if session is not None:
+            session.seasons.append({
+                "league_id": league_id,
+                "season": season,
+                "status": status,
+                "started_at": started_at.isoformat(),
+                "finished_at": finished_at.isoformat(),
+                "duration_seconds": round(
+                    time.perf_counter() - start, 3
+                ),
+                "stages": dict(stages),
+                "stage_durations_seconds": dict(stage_durations),
+                "error": error,
+            })
 
-            logger.info(
-                "Partial pipeline finished | run_id=%s | "
-                "status=%s | duration=%.2fs",
-                run_id,
-                report["status"],
-                time.perf_counter() - start,
-            )
+        if standalone:
+            try:
+                report = generate_pipeline_report(
+                    status=status,
+                    started_at=started_at,
+                    finished_at=finished_at,
+                    league_id=league_id,
+                    season=season,
+                    stages=stages,
+                    source=source,
+                    run_id=run_id,
+                    run_dir=run_dir,
+                    stage_durations=stage_durations,
+                    error=error,
+                )
 
-            logger.info("Artifacts saved: %s", run_dir)
+                logger.info(
+                    "Partial pipeline finished | "
+                    "run_id=%s | status=%s",
+                    run_id,
+                    report["status"],
+                )
 
-        except Exception:
-            logger.exception(
-                "Failed to save partial pipeline report | "
-                "run_id=%s",
-                run_id,
-            )
-            if status == "SUCCESS":
-                raise
+            except Exception:
+                logger.exception(
+                    "Failed to save partial pipeline report"
+                )
+                if status == "SUCCESS":
+                    raise
 
-        finally:
-            root_logger.removeHandler(handler)
-            handler.close()
+            finally:
+                root_logger.removeHandler(handler)
+                handler.close()
+
 
 
 def main():
@@ -796,31 +862,77 @@ def main():
 
 
     for season in seasons:
-        os.environ["SEASON"] = str(season)
+        mode = (
+            "loading" if args.load_only
+            else "transformation" if args.transform_only
+            else "ingestion" if args.ingest_only
+            else "full"
+        )
 
-        if args.load_only:
-            run_partial_pipeline(
-                mode="loading",
-                source=args.source,
-            )
+        session = ExecutionSession.create(
+            source=args.source,
+            mode=mode,
+        )
 
-        elif args.transform_only:
-            run_partial_pipeline(
-                mode="transformation",
-                source=args.source,
-            )
+        root_logger = logging.getLogger()
+        run_handler = create_run_log_handler(session.run_dir)
+        root_logger.addHandler(run_handler)
 
-        elif args.ingest_only:
-            run_partial_pipeline(
-                mode="ingestion",
-                source=args.source,
-            )
+        logger.info(
+            "Execution started | run_id=%s | "
+            "source=%s | mode=%s | seasons=%s",
+            session.run_id,
+            session.source,
+            session.mode,
+            seasons,
+        )
 
-        else:
-            run_for_season(
-                args.fetch,
-                source=args.source,
-            )
+        try:
+            for season in seasons:
+                os.environ["SEASON"] = str(season)
+
+                if args.load_only:
+                    run_partial_pipeline(
+                        mode="loading",
+                        source=args.source,
+                        session=session,
+                    )
+
+                elif args.transform_only:
+                    run_partial_pipeline(
+                        mode="transformation",
+                        source=args.source,
+                        session=session,
+                    )
+
+                elif args.ingest_only:
+                    run_partial_pipeline(
+                        mode="ingestion",
+                        source=args.source,
+                        session=session,
+                    )
+
+                else:
+                    run_for_season(
+                        args.fetch,
+                        source=args.source,
+                        session=session,
+                    )
+
+        finally:
+            try:
+                session.save_reports()
+
+                logger.info(
+                    "Execution artifacts saved | run_id=%s | "
+                    "directory=%s",
+                    session.run_id,
+                    session.run_dir,
+                )
+
+            finally:
+                root_logger.removeHandler(run_handler)
+                run_handler.close()
 
 
 if __name__ == "__main__":

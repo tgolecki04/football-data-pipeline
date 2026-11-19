@@ -1,5 +1,5 @@
 
-"""Inspect local pipeline execution history."""
+"""Display recent pipeline execution reports."""
 
 import argparse
 import json
@@ -13,7 +13,7 @@ def load_run_history(
     limit: int = 10,
     status: str | None = None,
 ) -> list[dict]:
-    """Read latest execution reports without modifying them."""
+    """Return recent runs, supporting report schemas v2 and v3."""
 
     if limit < 1:
         raise ValueError("limit must be positive")
@@ -38,33 +38,50 @@ def load_run_history(
             report = json.loads(
                 report_path.read_text(encoding="utf-8")
             )
-        except (OSError, json.JSONDecodeError):
-            # A broken report must not prevent reading other runs.
-            continue
 
-        if not isinstance(report, dict):
-            continue
+            if not isinstance(report, dict):
+                continue
 
-        if status is not None and report.get("status") != status:
-            continue
+            run_status = report.get("status", "UNKNOWN")
 
-        reports.append({
-            "run_id": report.get("run_id", run_dir.name),
-            "started_at": report.get("started_at", ""),
-            "source": report.get("source", "unknown"),
-            "league_id": report.get("league_id", "-"),
-            "season": report.get("season", "-"),
-            "status": report.get("status", "UNKNOWN"),
-            "duration_seconds": report.get(
-                "duration_seconds", 0
-            ),
-            "path": str(report_path),
-        })
+            if status is not None and run_status != status:
+                continue
+
+            season_results = report.get("seasons")
+
+            if isinstance(season_results, list):
+                seasons = [
+                    item["season"]
+                    for item in season_results
+                    if isinstance(item, dict)
+                    and isinstance(item.get("season"), int)
+                ]
+            else:
+                # Backwards compatibility with existing v2 reports.
+                season = report.get("season")
+                seasons = [season] if isinstance(season, int) else []
+
+            reports.append({
+                "run_id": report.get("run_id", run_dir.name),
+                "started_at": report.get("started_at", ""),
+                "source": report.get("source", "unknown"),
+                "mode": report.get("mode", "full"),
+                "seasons": seasons,
+                "status": run_status,
+                "duration_seconds": report.get(
+                    "duration_seconds", 0
+                ),
+                "path": str(report_path),
+            })
+
+        except (OSError, ValueError, TypeError):
+            # Invalid or unreadable reports should not break history.
+            continue
 
     reports.sort(
-        key=lambda report: (
-            report["started_at"],
-            report["run_id"],
+        key=lambda item: (
+            str(item["started_at"]),
+            str(item["run_id"]),
         ),
         reverse=True,
     )
@@ -73,68 +90,58 @@ def load_run_history(
 
 
 def print_run_history(reports: list[dict]) -> None:
-    """Display a readable terminal table."""
+    """Print a compact overview of recent executions."""
 
     if not reports:
         print("No pipeline execution reports found.")
         return
 
     print(
-        f"{'RUN ID':34} "
-        f"{'SOURCE':15} "
-        f"{'LEAGUE':>7} "
-        f"{'SEASON':>6} "
-        f"{'STATUS':10} "
-        f"{'TIME':>10}"
+        f"{'RUN ID':<30} "
+        f"{'SOURCE':<16} "
+        f"{'MODE':<15} "
+        f"{'SEASONS':<20} "
+        f"{'STATUS':<10}"
     )
 
-    print("-" * 91)
+    print("-" * 100)
 
     for report in reports:
-        run_id = str(report["run_id"])[:34]
-        source = str(report["source"])[:15]
-        league = str(report["league_id"])
-        season = str(report["season"])
-        status = str(report["status"])[:10]
-        duration = report["duration_seconds"]
-
-        try:
-            duration_text = f"{float(duration):.2f}s"
-        except (TypeError, ValueError):
-            duration_text = "-"
+        seasons = ", ".join(
+            str(season) for season in report["seasons"]
+        ) or "-"
 
         print(
-            f"{run_id:34} "
-            f"{source:15} "
-            f"{league:>7} "
-            f"{season:>6} "
-            f"{status:10} "
-            f"{duration_text:>10}"
+            f"{str(report['run_id']):<30} "
+            f"{str(report['source']):<16} "
+            f"{str(report['mode']):<15} "
+            f"{seasons:<20} "
+            f"{str(report['status']):<10}"
         )
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Show recent pipeline executions."
+        description="Inspect recent pipeline executions."
     )
 
     parser.add_argument(
         "--last",
         type=int,
         default=10,
-        help="Number of runs to show (default: 10).",
+        help="Number of runs to display.",
     )
 
     parser.add_argument(
         "--status",
-        choices=["SUCCESS", "FAILED"],
-        help="Show only runs with the selected status.",
+        choices=("SUCCESS", "FAILED"),
+        default=None,
     )
 
     args = parser.parse_args()
 
     if args.last < 1:
-        parser.error("--last must be positive.")
+        parser.error("--last must be positive")
 
     reports = load_run_history(
         limit=args.last,
