@@ -1,5 +1,5 @@
 import pandas as pd
-
+import numpy as np
 FINISHED_STATUSES = ("FT", "AET", "PEN")
 
 def to_team_matches(fixtures: pd.DataFrame) -> pd.DataFrame:
@@ -31,3 +31,49 @@ def add_form_features(team_matches: pd.DataFrame) -> pd.DataFrame:
     )
 
     return result
+
+def build_match_features(team_matches: pd.DataFrame) -> pd.DataFrame:
+    """Build one row per match with home and away form features.
+
+    Expects the output of add_form_features(): two rows per match, one for
+    the home team (is_home == 1) and one for the away team (is_home == 0).
+    Matches where a team has no form yet (first match of a season) keep NaN
+    and must be dropped before training.
+
+    The target column `result` is H (home win), D (draw) or A (away win).
+    Goals are not returned, so they cannot leak into the model by accident.
+    """
+    home = team_matches[team_matches["is_home"] == 1][
+        ["fixture_id", "date", "season", "team_id", "score", "form_points"]
+    ].rename(
+        columns={
+            "team_id": "home_team_id",
+            "score": "home_goals",
+            "form_points": "home_form_points",
+        }
+    )
+
+    away = team_matches[team_matches["is_home"] == 0][
+        ["fixture_id", "team_id", "score", "form_points"]
+    ].rename(
+        columns={
+            "team_id": "away_team_id",
+            "score": "away_goals",
+            "form_points": "away_form_points",
+        }
+    )
+
+    matches = home.merge(away, on="fixture_id", validate="one_to_one")
+
+    matches["result"] = np.select(
+        [
+            matches["home_goals"] > matches["away_goals"],
+            matches["home_goals"] < matches["away_goals"],
+        ],
+        ["H", "A"],
+        default="D",
+    )
+
+    matches = matches.drop(columns=["home_goals", "away_goals"])
+
+    return matches.sort_values("date", ignore_index=True)
